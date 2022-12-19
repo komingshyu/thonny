@@ -177,6 +177,10 @@ class FindDialog(CommonDialog):
         self.find_entry.focus_set()
         self.find_entry.selection_range(0, tk.END)
 
+    def _raise_tags(self):
+        self.codeview.text.tag_raise("found")
+        self.codeview.text.tag_raise("current_found")
+
     # callback for text modifications on the find entry object, used to dynamically enable and disable buttons
     def _update_button_statuses(self, *args):
         find_text = self.find_entry_var.get()
@@ -304,6 +308,7 @@ class FindDialog(CommonDialog):
                 self.codeview.text.tag_add(
                     "found", self.active_found_tag[0], self.active_found_tag[1]
                 )
+                self._raise_tags()
 
         else:  # start a new search, start from the current insert line position
             if self.active_found_tag is not None:
@@ -347,6 +352,7 @@ class FindDialog(CommonDialog):
         self.codeview.text.tag_add(
             "current_found", wordstart, wordend
         )  # tags the found word as active
+        self._raise_tags()
         self.active_found_tag = (wordstart, wordend)
         self.replace_and_find_button.config(state="normal")
         self.replace_button.config(state="normal")
@@ -404,12 +410,13 @@ class FindDialog(CommonDialog):
             endpos = self.codeview.text.index("%s+%dc" % (currentpos, len(tofind)))
             self.passive_found_tags.add((currentpos, endpos))
             self.codeview.text.tag_add("found", currentpos, endpos)
+            self._raise_tags()
 
             currentpos = self.codeview.text.index("%s+1c" % currentpos)
 
 
 def load_plugin() -> None:
-    def cmd_open_find_dialog():
+    def cmd_open_find_dialog(event=None):
         if _active_find_dialog is not None:
             _active_find_dialog.focus_set()
         else:
@@ -432,5 +439,7 @@ def load_plugin() -> None:
         default_sequence=select_sequence("<Control-f>", "<Command-f>"),
         extra_sequences=["<Control-Greek_phi>"],
     )
+
+    get_workbench().bind("<<CtrlFInText>>", cmd_open_find_dialog, True)
 
     get_workbench().bind("<F3>", find_f3, True)

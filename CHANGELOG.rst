@@ -2,6 +2,12 @@
 Version history
 ===============
 
+4.0.2 (2022-12-??)
+==================
+* Fix expression box glitch (lower frame box remaining visible) when debugging on macOS
+* Ignore disk flushing errors in the end of UF2 installation
+* Make port finding in the end of UF2 installation process more robust
+
 4.0.1 (2022-09-11)
 ==================
 * Fix error when running script with closed Shell, #2412

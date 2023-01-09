@@ -55,6 +55,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Algent Albrahimi
 * Anatoly Techtonik
 * Anders Pamdal
+* Andrea Ferrari
 * Andrew Scheller
 * André Roberge
 * Andy Piper
@@ -65,6 +66,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Austin Bart
 * Avag. sayan
 * badukaire
+* Bui Huy Quang
 * borpol
 * cefn
 * Celso Isayah Dias
@@ -92,6 +94,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Hyungseok Choi
 * IhorNehrutsa
 * Ingo Blechschmidt
+* Isaac Levy (@isaacl)
 * Ivanhercaz
 * Ivan.schamann
 * Илья Кругликов
@@ -110,6 +113,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Lrasinen
 * M Burak Kalkan
 * Marcelo de Gomensoro Malheiros
+* Marian-Silviu Iuga
 * Marie Roald
 * Marko Ristin
 * Matt Iversen

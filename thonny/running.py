@@ -96,6 +96,7 @@ _console_allocated = False
 
 class Runner:
     def __init__(self) -> None:
+        get_workbench().set_default("run.allow_running_unnamed_programs", True)
         get_workbench().set_default("run.auto_cd", True)
 
         self._init_commands()
@@ -322,7 +323,6 @@ class Runner:
         cmd_line: Union[str, List[str]],
         working_directory: Optional[str] = None,
     ) -> None:
-
         if working_directory and self._proxy.get_cwd() != working_directory:
             # create compound command
             # start with %cd
@@ -411,7 +411,9 @@ class Runner:
             return
 
         UNTITLED = "<untitled>"
-        if editor.get_filename():
+        if editor.get_filename() or not get_workbench().get_option(
+            "run.allow_running_unnamed_programs"
+        ):
             filename = editor.save_file()
             if not filename:
                 # user has cancelled file saving
@@ -672,7 +674,7 @@ class Runner:
 
     def restart_backend(self, clean: bool, first: bool = False, automatic: bool = False) -> None:
         """Recreate (or replace) backend proxy / backend process."""
-
+        was_running = self.is_running()
         self.destroy_backend()
         backend_name = get_workbench().get_option("run.backend_name")
         if backend_name not in get_workbench().get_backends():
@@ -688,7 +690,7 @@ class Runner:
         self._poll_backend_messages()
 
         if not first:
-            get_shell().restart(automatic=automatic)
+            get_shell().restart(automatic=automatic, was_running=was_running)
             get_shell().update_idletasks()
 
         get_workbench().event_generate("BackendRestart", full=True)
@@ -1339,7 +1341,6 @@ def _create_python_process(
     env=None,
     universal_newlines=True,
 ):
-
     cmd = [python_exe] + args
 
     if running_on_windows():

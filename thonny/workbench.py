@@ -358,7 +358,7 @@ class Workbench(tk.Tk):
             if "custom" in opts:
                 del opts["custom"]
             self._menubar = tk.Menu(self, **opts)
-            if self.get_ui_mode() != "simple":
+            if self.get_ui_mode() != "simple" or running_on_mac_os():
                 self["menu"] = self._menubar
         self._menus = {}  # type: Dict[str, tk.Menu]
         self._menu_item_specs = (
@@ -606,7 +606,7 @@ class Workbench(tk.Tk):
             "view",
             tr("Increase font size"),
             lambda: self._change_font_size(1),
-            default_sequence=select_sequence("<Control-plus>", "<Command-Shift-plus>"),
+            default_sequence=select_sequence("<Control-plus>", "<Command-plus>"),
             extra_sequences=["<Control-KP_Add>"],
             group=60,
         )

@@ -69,6 +69,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * badukaire
 * Bui Huy Quang
 * borpol
+* CADTEC GmbH (cadtec.ch)
 * cefn
 * Celso Isayah Dias
 * Chad Purdy
@@ -80,6 +81,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Dominic Twyman
 * Dominik George
 * Donald Butt
+* Duncan Ogilvie (@mrexodia)
 * Eliot Blennerhassett
 * Emanuel Angelo
 * Fabianus.c

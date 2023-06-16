@@ -77,7 +77,7 @@ class ESPFlashingDialog(BaseFlashingDialog):
         )
         self._erase_checkbutton = ttk.Checkbutton(
             self.main_frame,
-            text="Erase flash before installing",
+            text="Erase all flash before installing (not just the write areas)",
             variable=self._erase_variable,
         )
         self._erase_checkbutton.grid(row=3, column=2, sticky="w", padx=(ipadx, 0), pady=(ipady, 0))
@@ -196,7 +196,7 @@ class ESPFlashingDialog(BaseFlashingDialog):
             else:
                 return name
 
-        sorted_ports = sorted(list_serial_ports(max_cache_age=0), key=port_order)
+        sorted_ports = sorted(list_serial_ports(max_cache_age=0, skip_logging=True), key=port_order)
 
         result = {}
         for p in sorted_ports:
@@ -225,16 +225,20 @@ class ESPFlashingDialog(BaseFlashingDialog):
     def get_action_text_max_length(self):
         return 35
 
+    def _work_needs_disconnect(self):
+        return self._work_mode not in ["image_info", "esptool_version"]
+
     def prepare_work_get_options(self) -> Dict[str, Any]:
         target = self._target_combo.get_selected_value()
         proxy = get_runner().get_backend_proxy()
         port_was_used_in_thonny = (
             isinstance(proxy, BareMetalMicroPythonProxy) and proxy._port == target.port.device
         )
-        if port_was_used_in_thonny:
+        if port_was_used_in_thonny and self._work_needs_disconnect():
+            logger.info("Disconnecting")
             proxy.disconnect()
 
-        if self._work_mode in ["device_info", "image_info"]:
+        if self._work_mode in ["device_info", "image_info", "esptool_version"]:
             self.show_log_frame()
 
         return {
@@ -314,6 +318,13 @@ class ESPFlashingDialog(BaseFlashingDialog):
 
             progress_text = "Querying device info"
 
+        elif self._work_mode == "esptool_version":
+            command = self._esptool_command + [
+                "version",
+            ]
+
+            progress_text = "Querying esptool version"
+
         elif self._work_mode == "image_info":
             assert source_path
             command = self._esptool_command + ["image_info", "--version", "2", source_path]
@@ -322,10 +333,7 @@ class ESPFlashingDialog(BaseFlashingDialog):
         else:
             raise RuntimeError(f"Unknown work mode {self._work_mode!r}")
 
-        if (
-            self._work_mode in ["install", "device_info"]
-            and work_options["port_was_used_in_thonny"]
-        ):
+        if self._work_needs_disconnect() and work_options["port_was_used_in_thonny"]:
             self.append_text("Disconnecting from REPL...")
             self.set_action_text("Disconnecting from REPL...")
             time.sleep(1.5)
@@ -524,6 +532,11 @@ class ESPFlashingDialog(BaseFlashingDialog):
             command=self._show_image_info,
             state="normal" if self._can_query_image_info() else "disabled",
         )
+        action_menu.add_command(
+            label="Show esptool version",
+            command=self._show_esptool_version,
+            state="normal" if self._can_show_esptool_version() else "disabled",
+        )
 
         action_menu.add_separator()
         if self._advanced_widgets[0].winfo_ismapped():
@@ -545,11 +558,18 @@ class ESPFlashingDialog(BaseFlashingDialog):
         self._work_mode = "image_info"
         self.start_work_and_update_ui()
 
+    def _show_esptool_version(self) -> None:
+        self._work_mode = "esptool_version"
+        self.start_work_and_update_ui()
+
     def _can_query_device_info(self) -> bool:
         return self._state == "idle" and self._target_combo.get_selected_value() is not None
 
     def _can_query_image_info(self) -> bool:
         return self._state == "idle" and self._version_combo.get_selected_value() is not None
+
+    def _can_show_esptool_version(self) -> bool:
+        return self._state == "idle"
 
     def _hide_advanced_options(self) -> None:
         for widget in self._advanced_widgets:

@@ -408,9 +408,6 @@ class BaseFlashingDialog(WorkDialog, ABC):
         target_info: TargetInfo = self._target_combo.get_selected_value()
 
         self.report_progress(0, 100)
-        proxy = get_runner().get_backend_proxy()
-        if isinstance(proxy, BareMetalMicroPythonProxy):
-            proxy.disconnect()
 
         work_options = self.prepare_work_get_options()
         self.clear_log()
@@ -464,14 +461,19 @@ class BaseFlashingDialog(WorkDialog, ABC):
         """Running in a bg thread"""
         from urllib.request import urlopen
 
-        target_dir = tempfile.mkdtemp()
-        target_filename = download_info.get("filename", download_info["url"].split("/")[-1])
         download_url = download_info["url"]
+        url_protocol = download_url.split(":")[0].lower()
         size = download_info.get("size", None)
 
+        target_dir = tempfile.mkdtemp()
+        if url_protocol in ["http", "https"]:
+            inferred_filename = download_url.split("/")[-1]
+        else:
+            assert os.path.isfile(download_url)
+            inferred_filename = os.path.basename(download_url)
+        target_filename = download_info.get("filename", inferred_filename)
         target_path = os.path.join(target_dir, target_filename)
 
-        url_protocol = download_url.split(":")[0].lower()
         if url_protocol not in ["http", "https"]:
             logger.debug("Copying local file %r", download_url)
             shutil.copyfile(download_url, target_path)

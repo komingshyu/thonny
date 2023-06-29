@@ -18,6 +18,7 @@ from _tkinter import TclError
 
 from thonny import get_workbench, misc_utils, tktextext
 from thonny.common import TextRange
+from thonny.custom_notebook import CustomNotebook
 from thonny.languages import get_button_padding, tr
 from thonny.misc_utils import (
     running_on_linux,
@@ -30,6 +31,100 @@ from thonny.tktextext import TweakableText
 PARENS_REGEX = re.compile(r"[\(\)\{\}\[\]]")
 
 logger = getLogger(__name__)
+
+
+class CustomToolbutton(tk.Frame):
+    def __init__(
+        self,
+        master,
+        command: Callable,
+        image=None,
+        state="normal",
+        text=None,
+        compound=None,
+        width=None,
+        pad=None,
+    ):
+        if isinstance(image, (list, tuple)):
+            self.normal_image = image[0]
+            self.disabled_image = image[-1]
+        else:
+            self.normal_image = image
+            self.disabled_image = image
+
+        self.state = state
+        style_conf = get_style_configuration("CustomToolbutton")
+        self.normal_background = style_conf["background"]
+        self.hover_background = style_conf["activebackground"]
+
+        if state == "disabled":
+            self.current_image = self.disabled_image
+        else:
+            self.current_image = self.normal_image
+
+        super().__init__(master, background=self.normal_background)
+        self.label = tk.Label(
+            self,
+            image=self.current_image,
+            text=text,
+            compound=compound,
+            width=None if width is None else ems_to_pixels(width - 1),
+            background=self.normal_background,
+        )
+
+        # TODO: introduce padx and pady arguments
+        if isinstance(pad, int):
+            padx = pad
+            pady = pad
+        elif isinstance(pad, (tuple, list)):
+            assert len(pad) == 2
+            # TODO: how to use it?
+            padx = pad
+            pady = 0
+        else:
+            padx = None
+            pady = None
+
+        self.label.grid(row=0, column=0, padx=padx, pady=pady, sticky="nsew")
+        self.command = command
+        self.bind("<1>", self.on_click, True)
+        self.label.bind("<1>", self.on_click, True)
+        self.bind("<Enter>", self.on_enter, True)
+        self.bind("<Leave>", self.on_leave, True)
+
+    def on_click(self, event):
+        if self.state == "normal":
+            self.command()
+
+    def on_enter(self, event):
+        if self.state == "normal":
+            super().configure(background=self.hover_background)
+            self.label.configure(background=self.hover_background)
+
+    def on_leave(self, event):
+        super().configure(background=self.normal_background)
+        self.label.configure(background=self.normal_background)
+
+    def configure(self, cnf={}, state=None, image=None, command=None, **kw):
+        if command:
+            self.command = command
+
+        if "state" in cnf and not state:
+            state = cnf.get("state")
+        elif not state:
+            state = "normal"
+
+        self.state = state
+        if image:
+            self.current_image = image
+        elif self.state == "disabled":
+            self.current_image = self.disabled_image
+        else:
+            self.current_image = self.normal_image
+
+        # tkinter.Frame should be always state=normal as it won't display the image if "disabled"
+        # at least on mac with Tk 8.6.13
+        self.label.configure(cnf, image=self.current_image, state="normal", **kw)
 
 
 class CommonDialog(tk.Toplevel):
@@ -80,6 +175,7 @@ class CommonDialog(tk.Toplevel):
                 ttk.Treeview,
                 tk.Text,
                 ttk.Notebook,
+                CustomNotebook,
                 ttk.Button,
                 tk.Listbox,
             ),
@@ -671,7 +767,7 @@ class ClosableNotebook(ttk.Notebook):
         super().insert(pos, child, **kw)
 
 
-class AutomaticNotebook(ClosableNotebook):
+class AutomaticNotebook(CustomNotebook):
     """
     Enables inserting views according to their position keys.
     Remember its own position key. Automatically updates its visibility.
@@ -679,10 +775,10 @@ class AutomaticNotebook(ClosableNotebook):
 
     def __init__(self, master, position_key, preferred_size_in_pw=None):
         if get_workbench().in_simple_mode():
-            style = "TNotebook"
+            closable = False
         else:
-            style = "ButtonNotebook.TNotebook"
-        super().__init__(master, style=style, padding=0)
+            closable = True
+        super().__init__(master, closable=closable)
         self.position_key = position_key
 
         # should be in the end, so that it can be detected when
@@ -695,7 +791,7 @@ class AutomaticNotebook(ClosableNotebook):
 
     def insert(self, pos, child, **kw):
         if pos == "auto":
-            for sibling in map(self.nametowidget, self.tabs()):
+            for sibling in [page.content for page in self.pages]:
                 if (
                     not hasattr(sibling, "position_key")
                     or sibling.position_key == None
@@ -1180,9 +1276,12 @@ class ToolTip:
         self.text = text
         if self.tipwindow or not self.text:
             return
+
+        # x = self.widget.winfo_pointerx() + ems_to_pixels(0)
+        # y = self.widget.winfo_pointery() + ems_to_pixels(0.8)
         x, y, _, cy = self.widget.bbox("insert")
-        x = x + self.widget.winfo_rootx() + 27
-        y = y + cy + self.widget.winfo_rooty() + self.widget.winfo_height() + 2
+        x = x + self.widget.winfo_rootx()
+        y = y + self.widget.winfo_rooty() + self.widget.winfo_height() + ems_to_pixels(0.2)
         self.tipwindow = tw = tk.Toplevel(self.widget)
         if running_on_mac_os():
             try:
@@ -1235,8 +1334,8 @@ def create_tooltip(widget, text, **kw):
     def leave(event):
         toolTip.hidetip()
 
-    widget.bind("<Enter>", enter)
-    widget.bind("<Leave>", leave)
+    widget.bind("<Enter>", enter, True)
+    widget.bind("<Leave>", leave, True)
 
 
 class NoteBox(CommonDialog):
@@ -2553,6 +2652,41 @@ class AdvancedLabel(ttk.Label):
                 import webbrowser
 
                 webbrowser.open(self._url)
+
+
+def create_toolbutton(
+    master,
+    command=None,
+    text=None,
+    image=None,
+    compound=None,
+    state="normal",
+    pad=None,
+    width=None,
+) -> tk.Widget:
+    if True:
+        return CustomToolbutton(
+            master,
+            command=command,
+            text=text,
+            image=image,
+            compound=compound,
+            state=state,
+            width=width,
+            pad=pad,
+        )
+    else:
+        return ttk.Button(
+            master,
+            style="Toolbutton",
+            command=command,
+            text=text,
+            image=image,
+            compound=compound,
+            state=state,
+            pad=pad,
+            width=width,
+        )
 
 
 def open_with_default_app(path):

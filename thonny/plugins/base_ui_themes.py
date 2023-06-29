@@ -213,6 +213,7 @@ def clam() -> BasicUiThemeSettings:
                 "darkcolor": [("pressed", darker)],
             },
         },
+        "CustomToolbutton": {"configure": {"background": frame, "activebackground": darker}},
         "TCheckbutton": {
             "configure": {
                 "indicatorbackground": "#ffffff",
@@ -595,11 +596,14 @@ def enhanced_clam() -> CompoundUiThemeSettings:
 
 def enhanced_aqua() -> CompoundUiThemeSettings:
     return [
-        _treeview_settings(),
         _menubutton_settings(),
         # _paned_window_settings(),
         _menu_settings(),
         {
+            "ViewToolbar.TFrame": {
+                "configure": {"background": "systemWindowBackgroundColor1"}
+            },  # TODO:
+            "ViewToolbar.Toolbutton": {"configure": {"background": "systemWindowBackgroundColor1"}},
             "TPanedWindow": {"configure": {"background": "systemDialogBackgroundActive"}},
             "TFrame": {"configure": {"background": "systemDialogBackgroundActive"}},
             "ViewTab.TLabel": {"configure": {"padding": [scale(5), 0]}},
@@ -612,6 +616,12 @@ def enhanced_aqua() -> CompoundUiThemeSettings:
                 }
             },
             "Inactive.ViewTab.TLabel": {"map": {"relief": [("hover", "raised")]}},
+            "CustomToolbutton": {
+                "configure": {
+                    "background": "systemWindowBackgroundColor",
+                    "activebackground": "systemWindowBackgroundColor5",
+                }
+            },
         },
     ]
 

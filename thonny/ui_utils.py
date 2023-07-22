@@ -37,7 +37,8 @@ class CustomToolbutton(tk.Frame):
     def __init__(
         self,
         master,
-        command: Callable,
+        command: Callable = None,
+        style: Optional[str] = None,
         image=None,
         state="normal",
         text=None,
@@ -53,7 +54,10 @@ class CustomToolbutton(tk.Frame):
             self.disabled_image = image
 
         self.state = state
+        self.style = style
         style_conf = get_style_configuration("CustomToolbutton")
+        if self.style:
+            style_conf |= get_style_configuration(self.style)
         self.normal_background = style_conf["background"]
         self.hover_background = style_conf["activebackground"]
 
@@ -85,12 +89,23 @@ class CustomToolbutton(tk.Frame):
             padx = None
             pady = None
 
+        if text and not image:
+            # text only button content needs adjustment
+            pady = pady or 0
+            pady = (pady, pady + ems_to_pixels(0.23))
+
         self.label.grid(row=0, column=0, padx=padx, pady=pady, sticky="nsew")
         self.command = command
         self.bind("<1>", self.on_click, True)
         self.label.bind("<1>", self.on_click, True)
         self.bind("<Enter>", self.on_enter, True)
         self.bind("<Leave>", self.on_leave, True)
+
+    def cget(self, key: str) -> Any:
+        if key in ["text", "image"]:
+            return self.label.cget(key)
+        else:
+            return super().cget(key)
 
     def on_click(self, event):
         if self.state == "normal":
@@ -564,7 +579,7 @@ class AutomaticPanedWindow(tk.PanedWindow):
 
     def _update_appearance(self, event=None):
         self.configure(sashwidth=lookup_style_option("Sash", "sashthickness", ems_to_pixels(0.6)))
-        self.configure(background=lookup_style_option("TPanedWindow", "background"))
+        self.configure(background=lookup_style_option(".", "background"))
 
 
 class ClosableNotebook(ttk.Notebook):
@@ -855,6 +870,12 @@ class TreeFrame(ttk.Frame):
             self.vert_scrollbar.grid(
                 row=0, column=1, sticky=tk.NSEW, rowspan=2 if show_statusbar else 1
             )
+            scrollbar_stripe = check_create_aqua_scrollbar_stripe(self)
+            if scrollbar_stripe is not None:
+                scrollbar_stripe.grid(
+                    row=0, column=1, sticky="nse", rowspan=2 if show_statusbar else 1
+                )
+                scrollbar_stripe.tkraise()
 
         self.tree = ttk.Treeview(
             self,
@@ -865,6 +886,10 @@ class TreeFrame(ttk.Frame):
         )
         self.tree["show"] = "headings"
         self.tree.grid(row=0, column=0, sticky=tk.NSEW)
+        header_stripe = check_create_aqua_header_stripe(self)
+        if header_stripe is not None:
+            header_stripe.grid(row=0, column=0, sticky="new")
+            header_stripe.tkraise()
         self.vert_scrollbar["command"] = self.tree.yview
         self.columnconfigure(0, weight=1)
         self.rowconfigure(0, weight=1)
@@ -1265,11 +1290,12 @@ class ToolTip:
     """Taken from http://www.voidspace.org.uk/python/weblog/arch_d7_2006_07_01.shtml"""
 
     def __init__(self, widget, options):
-        self.widget = widget
+        self.widget: tk.Widget = widget
         self.tipwindow = None
         self.id = None
         self.x = self.y = 0
         self.options = options
+        self.focus_out_bind_ref = None
 
     def showtip(self, text):
         "Display text in tooltip window"
@@ -1305,15 +1331,17 @@ class ToolTip:
 
         label = tk.Label(tw, text=self.text, **self.options)
         label.pack()
-        # get_workbench().bind("WindowFocusOut", self.hidetip, True)
+        self.focus_out_bind_ref = self.widget.winfo_toplevel().bind(
+            "<FocusOut>", self.hidetip, True
+        )
 
     def hidetip(self, event=None):
         tw = self.tipwindow
         self.tipwindow = None
+        if self.tipwindow:
+            self.widget.unbind("<FocusOut>", self.focus_out_bind_ref)
         if tw:
             tw.destroy()
-
-        # get_workbench().unbind("WindowFocusOut", self.hidetip)
 
 
 def create_tooltip(widget, text, **kw):
@@ -2654,39 +2682,43 @@ class AdvancedLabel(ttk.Label):
                 webbrowser.open(self._url)
 
 
-def create_toolbutton(
-    master,
-    command=None,
-    text=None,
-    image=None,
-    compound=None,
-    state="normal",
-    pad=None,
-    width=None,
-) -> tk.Widget:
-    if True:
-        return CustomToolbutton(
-            master,
-            command=command,
-            text=text,
-            image=image,
-            compound=compound,
-            state=state,
-            width=width,
-            pad=pad,
-        )
+def os_is_in_dark_mode() -> Optional[bool]:
+    if running_on_mac_os():
+        try:
+            return bool(
+                int(
+                    tk._default_root.eval(
+                        f"tk::unsupported::MacWindowStyle isdark {tk._default_root}"
+                    )
+                )
+            )
+        except Exception:
+            logger.exception("Could not query for dark mode")
+            return None
+
+    return None
+
+
+def check_create_aqua_scrollbar_stripe(master) -> Optional[tk.Frame]:
+    if get_workbench().is_using_aqua_based_theme():
+        # Want to cover a gray stripe on the right edge of the scrollbar.
+        # Not sure if it is good idea to use fixed colors, but no named (light-dark aware) color matches.
+        # Best dynamic alternative is probably systemTextBackgroundColor
+        if os_is_in_dark_mode():
+            stripe_color = "#2d2e31"
+        else:
+            stripe_color = "#fafafa"
+        return tk.Frame(master, width=1, background=stripe_color)
     else:
-        return ttk.Button(
-            master,
-            style="Toolbutton",
-            command=command,
-            text=text,
-            image=image,
-            compound=compound,
-            state=state,
-            pad=pad,
-            width=width,
-        )
+        return None
+
+
+def check_create_aqua_header_stripe(master) -> Optional[tk.Frame]:
+    if get_workbench().is_using_aqua_based_theme():
+        # Want to cover a gray 2px stripe on the top edge of the Treeview header.
+        return tk.Frame(master, height=2, background="systemWindowBackgroundColor")
+    else:
+        return None
 
 
 def open_with_default_app(path):

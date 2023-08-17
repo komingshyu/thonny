@@ -450,10 +450,15 @@ class Runner:
         if editor.get_filename() or not get_workbench().get_option(
             "run.allow_running_unnamed_programs"
         ):
-            filename = editor.save_file()
-            if not filename:
-                # user has cancelled file saving
-                return
+            if editor.get_filename() and not editor.is_modified():
+                # Don't attempt to save as the file may be read-only
+                logger.debug("Not saving read only file %s", editor.get_filename())
+                filename = editor.get_filename()
+            else:
+                filename = editor.save_file()
+                if not filename:
+                    # user has cancelled file saving
+                    return
         else:
             filename = UNTITLED
 
@@ -1037,6 +1042,8 @@ class SubprocessProxy(BackendProxy, ABC):
         # see https://github.com/thonny/thonny/issues/808
         env["PYTHONUNBUFFERED"] = "1"
 
+        env["PYTHONSAFEPATH"] = "1"
+
         # Let back-end know about plug-ins
         env["THONNY_USER_DIR"] = THONNY_USER_DIR
         env["THONNY_FRONTEND_SYS_PATH"] = repr(sys.path)
@@ -1072,7 +1079,7 @@ class SubprocessProxy(BackendProxy, ABC):
         )
 
         if self.can_be_isolated():
-            cmd_line.insert(1, "-I")
+            cmd_line.insert(1, "-s")
 
         creationflags = 0
         if running_on_windows():
@@ -1294,7 +1301,7 @@ class SubprocessProxy(BackendProxy, ABC):
         return self._exe_dirs
 
     def can_be_isolated(self) -> bool:
-        """Says whether the backend may be launched with -I switch"""
+        """Says whether the backend may be launched with -s switch"""
         return True
 
     def fetch_next_message(self):

@@ -1138,6 +1138,7 @@ class FakeInputStream(FakeStream):
         self._eof = False
 
     def _generic_read(self, method, original_limit):
+        have_sent_input_request = False
         if original_limit is None:
             effective_limit = -1
         elif method == "readlines" and original_limit > -1:
@@ -1179,9 +1180,12 @@ class FakeInputStream(FakeStream):
                     break
 
                 else:
-                    self._backend.send_message(
-                        BackendEvent("InputRequest", method=method, limit=original_limit)
-                    )
+                    if not have_sent_input_request:
+                        self._backend.send_message(
+                            BackendEvent("InputRequest", method=method, limit=original_limit)
+                        )
+                        have_sent_input_request = True
+
                     msg = self._backend._fetch_next_incoming_message()
                     if isinstance(msg, InputSubmission):
                         self._buffer += msg.data
@@ -1413,20 +1417,15 @@ def format_exception_with_frame_info(e_type, e_value, e_traceback, shorten_filen
                         or not isinstance(e_value, SyntaxError)
                     )
                 ):
-                    fmt = '  File "{}", line {}, in {}\n'.format(
-                        entry.filename, entry.lineno, entry.name
-                    )
-
-                    if entry.line:
-                        fmt += "    {}\n".format(entry.line.strip())
-
+                    fmt = "".join(traceback.format_list([entry]))
                     yield (fmt, id(tb_temp.tb_frame), entry.filename, entry.lineno)
 
                 tb_temp = tb_temp.tb_next
 
             assert tb_temp is None  # tb was exhausted
 
-        for line in traceback.format_exception_only(etype, value):
+        # using format_exception with limit instead of format_exception_only because latter doesn't give extended info
+        for line in traceback.format_exception(etype, value, tb, limit=0):
             if etype is SyntaxError and line.endswith("^\n"):
                 # for some reason it may add several empty lines before ^-line
                 partlines = line.splitlines()

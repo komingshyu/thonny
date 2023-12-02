@@ -6,7 +6,7 @@ import tkinter as tk
 import traceback
 from logging import getLogger
 from tkinter import ttk
-from typing import cast
+from typing import Optional, cast
 
 from _tkinter import TclError
 
@@ -81,6 +81,7 @@ ANSI_COLOR_NAMES = {
 class ShellView(tk.PanedWindow):
     def __init__(self, master):
         self._osc_title = None
+        self.containing_notebook: Optional[CustomNotebook] = None
         super().__init__(
             master,
             orient="horizontal",
@@ -154,21 +155,8 @@ class ShellView(tk.PanedWindow):
 
     def set_osc_title(self, text: str) -> None:
         self._osc_title = text
-
-        if not hasattr(self, "home_widget"):
-            logger.warning("No home widget")
-            return
-
-        container = cast(ttk.Frame, getattr(self, "home_widget"))
-        notebook = cast(CustomNotebook, container.master)
-
-        # Should update tab text only if the tab is present
-        for tab in notebook.winfo_children():
-            try:
-                if container == tab:
-                    notebook.tab(container, text=self.get_tab_text())
-            except TclError:
-                logger.exception("Could not update tab title")
+        if self.containing_notebook is not None:
+            self.containing_notebook.tab(self, self.get_tab_text())
 
     def init_plotter(self):
         self.plotter = None

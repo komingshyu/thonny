@@ -67,6 +67,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Austin Bart
 * Avag. sayan
 * badukaire
+* @bmcage
 * Bui Huy Quang
 * borpol
 * CADTEC GmbH (cadtec.ch)
@@ -74,6 +75,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Celso Isayah Dias
 * Chad Purdy
 * @chechigp
+* @ChrisMayfield
 * codemee
 * Collision Detection
 * cspaier
@@ -94,6 +96,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * freddii
 * fstengel
 * Gabriel Slørdahl
+* @Gadgetoid
 * Gagan Saksena
 * Georges Khaznadar
 * Helmut Ascheid
@@ -130,6 +133,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Miro Hrončok
 * NathanBnm
 * Nicolas Despres
+* @omani
 * Paul Egbert
 * Pavel Minaev
 * Peter Marshall
@@ -140,6 +144,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Pop Vasile Alexandru
 * Radim
 * Ralf Michael Metzing
+* @rauferd
 * Rene Lehtma
 * Rune Langøy
 * Saishen, Inc.

@@ -36,7 +36,6 @@ from thonny.ui_utils import (
     get_hyperlink_cursor,
     lookup_style_option,
     replace_unsupported_chars,
-    scrollbar_style,
     select_sequence,
     show_dialog,
     tr_btn,
@@ -93,9 +92,7 @@ class ShellView(tk.PanedWindow):
         main_frame = tk.Frame(self)
         self.add(main_frame, minsize=100)
 
-        self.vert_scrollbar = ttk.Scrollbar(
-            main_frame, orient=tk.VERTICAL, style=scrollbar_style("Vertical")
-        )
+        self.vert_scrollbar = ttk.Scrollbar(main_frame, orient=tk.VERTICAL)
         self.vert_scrollbar.grid(row=1, column=2, sticky=tk.NSEW)
         get_workbench().add_command(
             "clear_shell",
@@ -227,8 +224,10 @@ class ShellView(tk.PanedWindow):
                 self.text.see("end")
 
     def print_error(self, txt):
+        was_scrolled_to_end = self.text.is_scrolled_to_end()
         self.text._insert_text_directly(txt, ("io", "stderr"))
-        self.text.see("end")
+        if was_scrolled_to_end:
+            self.text.see("end")
 
     def insert_command_link(self, txt, handler):
         self.text._insert_command_link(txt, handler)
@@ -470,6 +469,7 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
         self._update_visible_io(None)
 
     def _handle_toplevel_response(self, msg: ToplevelResponse) -> None:
+        was_scrolled_to_end = self.is_scrolled_to_end()
         if msg.get("error"):
             self._ensure_visible()
 
@@ -483,7 +483,8 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
             if preceding.strip() and not preceding.endswith("\n"):
                 self._insert_text_directly("\n")
             self._insert_text_directly(welcome_text, ("welcome",))
-            self.see("end")
+            if was_scrolled_to_end:
+                self.see("end")
 
         self.mark_set("output_end", self.index("end-1c"))
         self._discard_old_content()
@@ -492,7 +493,8 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
         self._io_cursor_offset = 0
         self._insert_prompt()
         self._try_submit_input()  # Trying to submit leftover code (eg. second magic command)
-        self.see("end")
+        if was_scrolled_to_end:
+            self.see("end")
 
         # import os
         # import psutil
@@ -520,6 +522,7 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
                         self._queued_io_events.append((block, stream_name))
 
     def _update_visible_io(self, target_num_visible_chars):
+        was_scrolled_to_end = self.is_scrolled_to_end()
         current_num_visible_chars = sum(map(lambda x: len(x[0]), self._applied_io_events))
 
         if (
@@ -549,7 +552,8 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
             current_num_visible_chars += len(data)
 
         self.mark_set("output_end", self.index("end-1c"))
-        self.see("end")
+        if was_scrolled_to_end:
+            self.see("end")
 
     def _apply_io_event(self, data, stream_name):
         if not data:
@@ -1604,6 +1608,9 @@ class BaseShellText(EnhancedTextWithLogging, SyntaxText):
                 self.direct_delete(pos, end_pos)
             else:
                 logger.debug("end_pos %s, output_end %s", end_pos, self.index("output_end"))
+
+    def is_scrolled_to_end(self):
+        return bool(self.bbox("end-1c"))
 
 
 class ShellText(BaseShellText):

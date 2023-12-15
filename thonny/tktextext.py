@@ -32,6 +32,7 @@ class TweakableText(tk.Text):
         self._original_insert = self._register_tk_proxy_function("insert", self.intercept_insert)
         self._original_delete = self._register_tk_proxy_function("delete", self.intercept_delete)
         self._original_mark = self._register_tk_proxy_function("mark", self.intercept_mark)
+        self.bind("<Control-Tab>", self._redirect_ctrl_tab, False)
 
     def _register_tk_proxy_function(self, operation, function):
         self._tk_proxies[operation] = function
@@ -193,6 +194,10 @@ class TweakableText(tk.Text):
         self._last_operation_time = time.time()
         if not self._suppress_events:
             self.event_generate("<<TextChange>>")
+
+    def _redirect_ctrl_tab(self, event):
+        self.winfo_toplevel().event_generate("<<ControlTabInText>>", state=event.state)
+        return "break"
 
 
 class EnhancedText(TweakableText):
@@ -798,8 +803,6 @@ class TextFrame(ttk.Frame):
         vertical_scrollbar=True,
         vertical_scrollbar_class=ttk.Scrollbar,
         horizontal_scrollbar_class=ttk.Scrollbar,
-        vertical_scrollbar_style=None,
-        horizontal_scrollbar_style=None,
         borderwidth=0,
         relief="sunken",
         **text_options,
@@ -820,9 +823,7 @@ class TextFrame(ttk.Frame):
         self.text = text_class(self, **final_text_options)
 
         if vertical_scrollbar:
-            self._vbar = vertical_scrollbar_class(
-                self, orient=tk.VERTICAL, style=vertical_scrollbar_style
-            )
+            self._vbar = vertical_scrollbar_class(self, orient=tk.VERTICAL)
             self._vbar["command"] = self._vertical_scroll
             self.text["yscrollcommand"] = self._vertical_scrollbar_update
             from thonny.ui_utils import check_create_aqua_scrollbar_stripe
@@ -833,9 +834,7 @@ class TextFrame(ttk.Frame):
             self._vbar_stripe = None
 
         if horizontal_scrollbar:
-            self._hbar = horizontal_scrollbar_class(
-                self, orient=tk.HORIZONTAL, style=horizontal_scrollbar_style
-            )
+            self._hbar = horizontal_scrollbar_class(self, orient=tk.HORIZONTAL)
             self._hbar["command"] = self._horizontal_scroll
             self.text["xscrollcommand"] = self._horizontal_scrollbar_update
         else:
@@ -905,8 +904,6 @@ class EnhancedTextFrame(TextFrame):
         vertical_scrollbar=True,
         vertical_scrollbar_class=ttk.Scrollbar,
         horizontal_scrollbar_class=ttk.Scrollbar,
-        vertical_scrollbar_style=None,
-        horizontal_scrollbar_style=None,
         borderwidth=0,
         relief="sunken",
         gutter_background="#e0e0e0",
@@ -922,8 +919,6 @@ class EnhancedTextFrame(TextFrame):
             vertical_scrollbar=vertical_scrollbar,
             vertical_scrollbar_class=vertical_scrollbar_class,
             horizontal_scrollbar_class=horizontal_scrollbar_class,
-            vertical_scrollbar_style=vertical_scrollbar_style,
-            horizontal_scrollbar_style=horizontal_scrollbar_style,
             borderwidth=borderwidth,
             relief=relief,
             **text_options,

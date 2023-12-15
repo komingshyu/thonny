@@ -46,6 +46,7 @@ class CustomToolbutton(tk.Frame):
         compound=None,
         width=None,
         pad=None,
+        font=None,
     ):
         if isinstance(image, (list, tuple)):
             self.normal_image = image[0]
@@ -68,6 +69,10 @@ class CustomToolbutton(tk.Frame):
             self.current_image = self.normal_image
 
         super().__init__(master, background=self.normal_background)
+        kw = {}
+        if font is not None:
+            kw["font"] = font
+
         self.label = tk.Label(
             self,
             image=self.current_image,
@@ -75,6 +80,7 @@ class CustomToolbutton(tk.Frame):
             compound=compound,
             width=None if width is None else ems_to_pixels(width - 1),
             background=self.normal_background,
+            **kw,
         )
 
         # TODO: introduce padx and pady arguments
@@ -655,10 +661,7 @@ class TreeFrame(ttk.Frame):
         **tree_kw,
     ):
         ttk.Frame.__init__(self, master, borderwidth=borderwidth, relief=relief)
-        # http://wiki.tcl.tk/44444#pagetoc50f90d9a
-        self.vert_scrollbar = ttk.Scrollbar(
-            self, orient=tk.VERTICAL, style=scrollbar_style("Vertical")
-        )
+        self.vert_scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL)
         if show_scrollbar:
             self.vert_scrollbar.grid(
                 row=0, column=1, sticky=tk.NSEW, rowspan=2 if show_statusbar else 1
@@ -716,16 +719,6 @@ class TreeFrame(ttk.Frame):
 
     def clear_error(self):
         self.error_label.grid_remove()
-
-
-def scrollbar_style(orientation):
-    # In mac ttk.Scrollbar uses native rendering unless style attribute is set
-    # see http://wiki.tcl.tk/44444#pagetoc50f90d9a
-    # Native rendering doesn't look good in dark themes
-    if running_on_mac_os() and get_workbench().uses_dark_ui_theme():
-        return orientation + ".TScrollbar"
-    else:
-        return None
 
 
 def sequence_to_accelerator(sequence):
@@ -2164,19 +2157,20 @@ def show_dialog(dlg, master=None, width=None, height=None, modal=True):
     if hasattr(dlg, "set_initial_focus"):
         dlg.set_initial_focus()
 
-    dlg.wait_window(dlg)
-    dlg.grab_release()
-    master.winfo_toplevel().lift()
-    master.winfo_toplevel().focus_force()
-    master.winfo_toplevel().grab_set()
-    if running_on_mac_os():
-        master.winfo_toplevel().grab_release()
+    if modal:
+        dlg.wait_window(dlg)
+        dlg.grab_release()
+        master.winfo_toplevel().lift()
+        master.winfo_toplevel().focus_force()
+        master.winfo_toplevel().grab_set()
+        if running_on_mac_os():
+            master.winfo_toplevel().grab_release()
 
-    if old_focused_widget is not None:
-        try:
-            old_focused_widget.focus_force()
-        except TclError:
-            pass
+        if old_focused_widget is not None:
+            try:
+                old_focused_widget.focus_force()
+            except TclError:
+                pass
 
 
 def popen_with_ui_thread_callback(*Popen_args, on_completion, poll_delay=0.1, **Popen_kwargs):
@@ -2327,6 +2321,8 @@ def get_size_option_name(window):
 def get_default_basic_theme():
     if running_on_windows():
         return "vista"
+    elif running_on_mac_os():
+        return "aqua"
     else:
         return "clam"
 

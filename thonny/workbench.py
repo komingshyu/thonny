@@ -162,6 +162,8 @@ class Workbench(tk.Tk):
         self._init_language()
 
         self._active_ui_mode = os.environ.get("THONNY_MODE", self.get_option("general.ui_mode"))
+        if self._active_ui_mode == "expert":  # not used since 5.0
+            self._active_ui_mode = "regular"
 
         self._init_scaling()
 
@@ -219,6 +221,8 @@ class Workbench(tk.Tk):
         self.get_editor_notebook().bind("<<NotebookTabChanged>>", self.update_title, True)
         self.get_editor_notebook().bind("<<NotebookTabChanged>>", self._update_toolbar, True)
         self.bind_all("<KeyPress>", self._on_all_key_presses, True)
+        self.bind("<Control-Tab>", self.select_another_tab, True)
+        self.bind("<<ControlTabInText>>", self.select_another_tab, True)
         self.bind("<FocusOut>", self._on_focus_out, True)
         self.bind("<FocusIn>", self._on_focus_in, True)
         self.bind("BackendRestart", self._on_backend_restart, True)
@@ -680,28 +684,27 @@ class Workbench(tk.Tk):
             group=70,
         )
 
-        if self.get_ui_mode() == "expert":
-            self.add_command(
-                "toggle_maximize_view",
-                "view",
-                tr("Maximize view"),
-                self._cmd_toggle_maximize_view,
-                flag_name="view.maximize_view",
-                default_sequence=None,
-                group=80,
-            )
-            self.bind_class("TNotebook", "<Double-Button-1>", self._maximize_view, True)
-            self.bind("<Escape>", self._unmaximize_view, True)
+        self.add_command(
+            "toggle_maximize_view",
+            "view",
+            tr("Maximize view"),
+            self._cmd_toggle_maximize_view,
+            flag_name="view.maximize_view",
+            default_sequence=None,
+            group=80,
+        )
+        self.bind_class("TNotebook", "<Double-Button-1>", self._maximize_view, True)
+        self.bind("<Escape>", self._unmaximize_view, True)
 
-            self.add_command(
-                "toggle_maximize_view",
-                "view",
-                tr("Full screen"),
-                self._cmd_toggle_full_screen,
-                flag_name="view.full_screen",
-                default_sequence=select_sequence("<F11>", "<Command-Shift-F>"),
-                group=80,
-            )
+        self.add_command(
+            "toggle_maximize_view",
+            "view",
+            tr("Full screen"),
+            self._cmd_toggle_full_screen,
+            flag_name="view.full_screen",
+            default_sequence=select_sequence("<F11>", "<Command-Shift-F>"),
+            group=80,
+        )
 
         if self.in_simple_mode():
             self.add_command(
@@ -1172,10 +1175,14 @@ class Workbench(tk.Tk):
         if include_in_toolbar:
             toolbar_group = self._get_menu_index(menu) * 100 + group
             assert caption is not None
+            assert image is not None
+            toolbar_image = self.get_image(image, for_toolbar=True)
+            disabled_toolbar_image = self.get_image(image, for_toolbar=True, disabled=True)
+
             self._add_toolbar_button(
                 command_id,
-                _image,
-                _disabled_image,
+                toolbar_image,
+                disabled_toolbar_image,
                 command_label,
                 caption,
                 caption if alternative_caption is None else alternative_caption,
@@ -1447,8 +1454,8 @@ class Workbench(tk.Tk):
             return "Windows"
         elif running_on_rpi() and "Raspberry Pi" in available_themes:
             return "Raspberry Pi"
-        elif "Enhanced Clam" in available_themes:
-            return "Enhanced Clam"
+        elif "Kind of Aqua" in available_themes:
+            return "Kind of Aqua"
         else:
             return "clam"
 
@@ -1679,10 +1686,16 @@ class Workbench(tk.Tk):
         return os.path.dirname(sys.modules["thonny"].__file__)
 
     def get_image(
-        self, filename: str, tk_name: Optional[str] = None, disabled=False
+        self,
+        filename: str,
+        tk_name: Optional[str] = None,
+        disabled=False,
+        for_toolbar=False,
     ) -> tk.PhotoImage:
         if tk_name is None:
             tk_name = filename.replace(".", "_").replace("\\", "_").replace("/", "_")
+            if for_toolbar:
+                tk_name += "_toolbar"
             if disabled:
                 tk_name += "_disabled"
 
@@ -1719,6 +1732,10 @@ class Workbench(tk.Tk):
             treeview_rowheight > threshold
             and not filename.endswith("48.png")
             or treeview_rowheight > threshold * 1.5
+            or self.in_simple_mode()
+            and for_toolbar
+            and not filename.endswith("48.png")
+            and self.winfo_screenwidth() >= 1280
         ):
             scaled_filename = filename[:-4] + "_2x.png"
             scaled_filename_alt = filename[:-4] + "48.png"  # used in pi theme
@@ -2751,6 +2768,22 @@ class Workbench(tk.Tk):
             item.destroy()
 
         self._notebook_drop_targets = []
+
+    def select_another_tab(self, event: tk.Event) -> Optional[str]:
+        # handles also Shift-Control-Tab
+        # needs to be bound here because Notebooks don't own their contents
+        widget = self.focus_get()
+        while widget is not None:
+            print("Widget", widget)
+            nb: CustomNotebook = getattr(widget, "containing_notebook", None)
+            if nb is not None:
+                return nb.select_another_tab(event)
+            else:
+                widget_name = widget.winfo_parent()
+                if widget_name and widget_name != ".":
+                    widget = widget.nametowidget(widget_name)
+
+        return None
 
 
 class WorkbenchEvent(Record):

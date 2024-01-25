@@ -1654,7 +1654,7 @@ class Workbench(tk.Tk):
             else:
                 conf = get_style_configuration("Menu")
 
-            menu = tk.Menu(self._menubar, **conf)
+            menu = tk.Menu(self._menubar, name=name, **conf)
             menu["postcommand"] = lambda: self._update_menu(menu, name)
             self._menubar.add_cascade(label=label if label else name, menu=menu)
 
@@ -2444,9 +2444,13 @@ class Workbench(tk.Tk):
 
         self._closing = True
         try:
+            from thonny.plugins import replayer
+
+            if replayer.instance is not None:
+                replayer.instance.close()
             self._save_layout()
             self._editor_notebook.remember_open_files()
-            self.event_generate("WorkbenchClose")
+            self.event_generate("WorkbenchClose", widget=self)
             self._configuration_manager.save()
             temp_dir = self.get_temp_dir(create_if_doesnt_exist=False)
             if os.path.exists(temp_dir):

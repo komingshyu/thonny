@@ -155,8 +155,9 @@ class CommonDialog(tk.Toplevel):
         super().__init__(master=master, class_="Thonny", **kw)
         self.withdraw()  # remain invisible until size calculations are done
 
-        # TODO: Is it still required ?
-        # self.bind("<FocusIn>", self._unlock_on_focus_in, True)
+        # Opening a dialog and minimizing everything with Win-D in Windows makes the main
+        # window and dialog stuck. This is a work-around.
+        self.bind("<FocusIn>", self._unlock_on_focus_in, True)
 
         if not skip_tk_dialog_attributes:
             # https://bugs.python.org/issue43655
@@ -2115,7 +2116,9 @@ def handle_mistreated_latin_shortcuts(registry, event):
                     handler()
 
 
-def show_dialog(dlg, master=None, width=None, height=None, modal=True):
+def show_dialog(
+    dlg, master=None, width=None, height=None, left=None, top=None, modal=True, transient=True
+):
     if getattr(dlg, "closed", False):
         return
 
@@ -2127,7 +2130,7 @@ def show_dialog(dlg, master=None, width=None, height=None, modal=True):
     get_workbench().event_generate("WindowFocusOut")
     # following order seems to give most smooth appearance
     old_focused_widget = master.focus_get()
-    if master.winfo_toplevel().winfo_viewable():
+    if transient and master.winfo_toplevel().winfo_viewable():
         dlg.transient(master.winfo_toplevel())
 
     saved_size = get_workbench().get_option(get_size_option_name(dlg))
@@ -2425,6 +2428,10 @@ class MappingCombobox(ttk.Combobox):
     def set_mapping(self, mapping: Dict[str, Any]):
         self.mapping = mapping
         self["values"] = list(mapping)
+
+    def add_pair(self, label, value):
+        self.mapping[label] = value
+        self["values"] = list(self.mapping)
 
     def get_selected_value(self) -> Any:
         desc = self.mapping_desc_variable.get()

@@ -201,7 +201,7 @@ class MicroPythonBackend(MainBackend, ABC):
             self._validate_time()
 
     def _check_perform_just_in_case_gc(self):
-        if self._using_microbit_micropython():
+        if self._using_simplified_micropython():
             # May fail to allocate memory without this
             self._perform_gc()
 
@@ -358,12 +358,14 @@ class MicroPythonBackend(MainBackend, ABC):
     def _check_for_connection_error(self) -> None:
         self.get_connection().check_for_error()
 
-    def _using_microbit_micropython(self):
+    def _using_simplified_micropython(self):
         if not self._welcome_text:
             return None
 
         # Don't confuse MicroPython and CircuitPython
-        return "micro:bit" in self._welcome_text.lower() and "MicroPython" in self._welcome_text
+        return (
+            "micro:bit" in self._welcome_text.lower() or "calliope" in self._welcome_text.lower()
+        ) and "MicroPython" in self._welcome_text
 
     def _connected_to_pyboard(self):
         if not self._welcome_text:
@@ -399,7 +401,7 @@ class MicroPythonBackend(MainBackend, ABC):
             return self._evaluate("__thonny_helper.sys.path")
 
     def _fetch_epoch_year(self):
-        if self._using_microbit_micropython():
+        if self._using_simplified_micropython():
             return None
 
         if self._connected_to_circuitpython() and "rtc" not in self._builtin_modules:
@@ -439,7 +441,7 @@ class MicroPythonBackend(MainBackend, ABC):
             return result
 
     def _update_cwd(self):
-        if not self._using_microbit_micropython():
+        if not self._using_simplified_micropython():
             logger.debug("Updating cwd")
             self._cwd = self._evaluate("__thonny_helper.getcwd()")
 

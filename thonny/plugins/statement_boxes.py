@@ -3,6 +3,7 @@ NB! Stippling doesn't work on mac:
 http://wiki.tcl.tk/44444
 http://rkeene.org/projects/tcl/tk.fossil/tkthistory/2954673
 """
+
 import os.path
 from logging import getLogger
 from tkinter import font
@@ -13,7 +14,7 @@ from thonny.codeview import get_syntax_options_for_tag
 
 
 def create_bitmap_file(width, height, predicate, name):
-    cache_dir = os.path.join(thonny.THONNY_USER_DIR, "image_cache")
+    cache_dir = os.path.join(thonny.get_thonny_user_dir(), "image_cache")
     name = "%s_%d_%d.xbm" % (name, width, height)
     filename = os.path.join(cache_dir, name)
 

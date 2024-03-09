@@ -13,7 +13,7 @@ import traceback
 from abc import ABC, abstractmethod
 from logging import getLogger
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union  # @UnusedImport
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union  # @UnusedImport
 
 from _tkinter import TclError
 
@@ -609,26 +609,30 @@ class AutomaticNotebook(CustomNotebook):
         # constructor hasn't completed yet
         self.preferred_size_in_pw = preferred_size_in_pw
 
-    def after_add_or_insert(self, page: CustomNotebookPage) -> None:
-        super().after_add_or_insert(page)
+    def after_insert(
+        self,
+        pos: Union[int, Literal["end"]],
+        page: CustomNotebookPage,
+        old_notebook: Optional[CustomNotebook],
+    ) -> None:
+        super().after_insert(pos, page, old_notebook)
         self._update_visibility()
-        get_workbench().event_generate("NotebookPageOpened", page=page)
+        if old_notebook is None:
+            get_workbench().event_generate("NotebookPageOpened", page=page)
+        else:
+            get_workbench().event_generate(
+                "NotebookPageMoved", page=page, new_notebook=self, old_notebook=old_notebook
+            )
 
-    def after_forget(self, page: CustomNotebookPage):
+    def after_forget(
+        self, pos: int, page: CustomNotebookPage, new_notebook: Optional[CustomNotebook]
+    ):
         # see the comment at after_add_or_insert
-        super().after_forget(page)
+        super().after_forget(pos, page, new_notebook)
         self._update_visibility()
-        get_workbench().event_generate("NotebookPageClosed", page=page)
-
-    def after_move(self, page: CustomNotebookPage, old_notebook: CustomNotebook):
-        # see the comment at after_add_or_insert
-        super().after_move(page, old_notebook)
-        self._update_visibility()
-        if old_notebook is not self and isinstance(old_notebook, AutomaticNotebook):
-            old_notebook._update_visibility()
-        get_workbench().event_generate(
-            "NotebookPageMoved", page=page, new_notebook=self, old_notebook=old_notebook
-        )
+        if new_notebook is None:
+            get_workbench().event_generate("NotebookPageClosed", page=page)
+        # if there is new_notebook, then Workbench gets its Moved event from it
 
     def _is_visible(self):
         if not isinstance(self.master, AutomaticPanedWindow):
@@ -692,6 +696,13 @@ class TreeFrame(ttk.Frame):
         self.rowconfigure(0, weight=1)
         self.tree.bind("<<TreeviewSelect>>", self.on_select, "+")
         self.tree.bind("<Double-Button-1>", self.on_double_click, "+")
+        self.tree.bind("<Button-3>", self.on_secondary_click, True)
+        if misc_utils.running_on_mac_os():
+            self.tree.bind("<2>", self.on_secondary_click, True)
+            self.tree.bind("<Control-1>", self.on_secondary_click, True)
+
+        self.context_menu = tk.Menu(self.tree, tearoff=0)
+        self.context_menu.add_command(command=self.on_copy, label="Copy")
 
         self.error_label = ttk.Label(self.tree)
 
@@ -707,6 +718,20 @@ class TreeFrame(ttk.Frame):
 
     def clear(self):
         self._clear_tree()
+
+    def on_secondary_click(self, event):
+        self.tree.identify_row(event.y)
+        self.context_menu.post(event.x_root, event.y_root)
+
+    def on_copy(self):
+        texts = []
+        for item in self.tree.selection():
+            text = self.tree.item(item, option="text")
+            values = map(str, self.tree.item(item, option="values"))
+            combined = text + "\t" + "\t".join(values)
+            texts.append(combined.strip("\t"))
+        self.clipboard_clear()
+        self.clipboard_append(os.linesep.join(texts))
 
     def on_select(self, event):
         pass
@@ -778,9 +803,24 @@ def set_zoomed(toplevel, value):
 
 
 class EnhancedTextWithLogging(tktextext.EnhancedText):
-    def __init__(self, master=None, style="Text", tag_current_line=False, cnf={}, **kw):
+    def __init__(
+        self,
+        master,
+        indent_width: int,
+        tab_width: int,
+        style="Text",
+        tag_current_line=False,
+        cnf={},
+        **kw,
+    ):
         super().__init__(
-            master=master, style=style, tag_current_line=tag_current_line, cnf=cnf, **kw
+            master=master,
+            indent_width=indent_width,
+            tab_width=tab_width,
+            style=style,
+            tag_current_line=tag_current_line,
+            cnf=cnf,
+            **kw,
         )
 
         self._last_event_changed_line_count = False
@@ -800,15 +840,16 @@ class EnhancedTextWithLogging(tktextext.EnhancedText):
         trivial_for_coloring, trivial_for_parens = self._is_trivial_edit(
             chars, line_before, line_after
         )
-        get_workbench().event_generate(
-            "TextInsert",
-            index=concrete_index,
-            text=chars,
-            tags=tags,
-            text_widget=self,
-            trivial_for_coloring=trivial_for_coloring,
-            trivial_for_parens=trivial_for_parens,
-        )
+        if not self._suppress_events:
+            get_workbench().event_generate(
+                "TextInsert",
+                index=concrete_index,
+                text=chars,
+                tags=tags,
+                text_widget=self,
+                trivial_for_coloring=trivial_for_coloring,
+                trivial_for_parens=trivial_for_parens,
+            )
         return result
 
     def direct_delete(self, index1, index2=None, **kw):
@@ -835,14 +876,15 @@ class EnhancedTextWithLogging(tktextext.EnhancedText):
             trivial_for_coloring, trivial_for_parens = self._is_trivial_edit(
                 chars, line_before, line_after
             )
-            get_workbench().event_generate(
-                "TextDelete",
-                index1=concrete_index1,
-                index2=concrete_index2,
-                text_widget=self,
-                trivial_for_coloring=trivial_for_coloring,
-                trivial_for_parens=trivial_for_parens,
-            )
+            if not self._suppress_events:
+                get_workbench().event_generate(
+                    "TextDelete",
+                    index1=concrete_index1,
+                    index2=concrete_index2,
+                    text_widget=self,
+                    trivial_for_coloring=trivial_for_coloring,
+                    trivial_for_parens=trivial_for_parens,
+                )
 
     def _is_trivial_edit(self, chars, line_before, line_after):
         # line is taken after edit for insertion and before edit for deletion
@@ -2524,6 +2566,20 @@ def open_with_default_app(path):
         subprocess.run(["open", path])
     else:
         subprocess.run(["xdg-open", path])
+
+
+def compute_tab_stops(tab_width_in_chars: int, font: tk.font.Font, offset_px=0) -> List[int]:
+    tab_pixels = font.measure("n" * tab_width_in_chars)
+
+    tabs = []
+    if offset_px > 0:
+        tabs.append(offset_px)
+
+    for _ in range(20):
+        offset_px += tab_pixels
+        tabs.append(offset_px)
+
+    return tabs
 
 
 if __name__ == "__main__":

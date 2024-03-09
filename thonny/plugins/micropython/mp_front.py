@@ -17,11 +17,12 @@ from thonny.plugins.backend_config_page import (
     get_ssh_password,
 )
 from thonny.running import SubprocessProxy
-from thonny.ui_utils import create_string_var, create_url_label, ems_to_pixels
+from thonny.ui_utils import TreeFrame, create_string_var, create_url_label, ems_to_pixels
 
 logger = getLogger(__name__)
 
 DEFAULT_WEBREPL_URL = "ws://192.168.4.1:8266/"
+WEBREPL_OPTION_DESC = "< WebREPL >"
 WEBREPL_PORT_VALUE = "webrepl"
 VIDS_PIDS_TO_AVOID_IN_GENERIC_BACKEND = set()
 
@@ -224,6 +225,8 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
         if last_backs.get((p.vid, p.pid), "") == cls.backend_name:
             return True
 
+        # Avoid CDC2 interfaces, see
+        # https://github.com/adafruit/Adafruit_Board_Toolkit/blob/d1d3423ffa8fc91f7752b4eda8584d333e3da7d2/adafruit_board_toolkit/circuitpython_serial.py#L80
         if "CircuitPython CDC " in (p.interface or ""):
             return cls._is_for_circuitpython()
 
@@ -428,6 +431,9 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         super().__init__(master)
 
         self._has_opened_python_flasher = False
+        self._port_names_by_desc = {}
+        self._ports_by_desc = {}
+        self._port_polling_after_id = None
 
         intro_text = self._get_intro_text()
         if intro_text:
@@ -444,34 +450,12 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         )
         port_label.grid(row=3, column=0, sticky="nw", pady=(10, 0))
 
-        self._ports_by_desc = {get_serial_port_label(p): p.device for p in list_serial_ports()}
-        self._ports_by_desc["< " + tr("Try to detect port automatically") + " >"] = "auto"
-
-        self._WEBREPL_OPTION_DESC = "< WebREPL >"
-        if self.allow_webrepl:
-            self._ports_by_desc[self._WEBREPL_OPTION_DESC] = WEBREPL_PORT_VALUE
-
-        def port_order(p):
-            _, name = p
-            if name is None:
-                return ""
-            elif name.startswith("COM") and len(name) == 4:
-                # Make one-digit COM ports go before COM10
-                return name.replace("COM", "COM0")
-            else:
-                return name
-
-        # order by port, auto first
-        port_descriptions = [key for key, _ in sorted(self._ports_by_desc.items(), key=port_order)]
-
-        self._port_desc_variable = create_string_var(
-            self.get_stored_port_desc(), self._on_change_port
-        )
+        self._port_desc_variable = create_string_var("", self._on_change_port)
         self._port_combo = ttk.Combobox(
             self,
             exportselection=False,
             textvariable=self._port_desc_variable,
-            values=port_descriptions,
+            values=[],
         )
         self._port_combo.state(["!disabled", "readonly"])
 
@@ -479,6 +463,7 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         self.columnconfigure(0, weight=1)
 
         self._webrepl_frame = None
+        self._serial_frame = None
 
         self.add_checkbox(
             self.backend_name + ".interrupt_on_connect",
@@ -540,40 +525,129 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
             )
             python_link.grid(row=i, column=1, sticky="e")
 
-        self._on_change_port()
+        self._keep_refreshing_ports(first_time=True)
+
+    def _keep_refreshing_ports(self, first_time=False):
+        ports_by_desc_before = self._ports_by_desc.copy()
+        self._refresh_ports(first_time=first_time)
+        if (
+            not self._port_desc_variable.get()
+            and self._ports_by_desc != ports_by_desc_before
+            and not first_time
+        ):
+            new_descs = self._ports_by_desc.keys() - ports_by_desc_before.keys()
+            if len(new_descs) == 1:
+                self._port_desc_variable.set(new_descs.pop())
+
+        self._port_polling_after_id = self.after(500, self._keep_refreshing_ports)
+
+    def _refresh_ports(self, first_time=False):
+        old_port_desc = self._port_desc_variable.get()
+        ports = list_serial_ports(max_cache_age=0, skip_logging=True)
+        self._ports_by_desc = {get_serial_port_label(p): p for p in ports}
+        self._port_names_by_desc = {get_serial_port_label(p): p.device for p in ports}
+        self._port_names_by_desc["< " + tr("Try to detect port automatically") + " >"] = "auto"
+
+        if self.allow_webrepl:
+            self._port_names_by_desc[WEBREPL_OPTION_DESC] = WEBREPL_PORT_VALUE
+
+        def port_order(p):
+            _, name = p
+            if name is None:
+                return ""
+            elif name.startswith("COM") and len(name) == 4:
+                # Make one-digit COM ports go before COM10
+                return name.replace("COM", "COM0")
+            else:
+                return name
+
+        # order by port, auto first
+        port_descriptions = [
+            key for key, _ in sorted(self._port_names_by_desc.items(), key=port_order)
+        ]
+        self._port_combo["values"] = port_descriptions
+
+        # update selection after first update
+        if self._port_desc_variable.get() == "" and first_time:
+            self._port_desc_variable.set(self.get_stored_port_desc())
+
+        new_port_desc = self._port_desc_variable.get()
+        if new_port_desc != "" and new_port_desc not in self._port_names_by_desc:
+            logger.info(
+                "Description %r not in %r anymore", new_port_desc, list(self._ports_by_desc.keys())
+            )
+            self._port_desc_variable.set("")
+
+        new_port_desc = self._port_desc_variable.get()
+        if new_port_desc != old_port_desc:
+            if new_port_desc != "":
+                logger.info("Changing port from %r to %r", old_port_desc, new_port_desc)
+            self._port_desc_variable.set(new_port_desc)
+            self._on_change_port()
 
     def _get_flasher_link_title(self) -> str:
         return tr("Install or update %s") % "MicroPython"
 
     def _handle_python_installer_link(self, kind: str):
-        self._open_flashing_dialog(kind)
+        new_port = self._open_flashing_dialog(kind)
+        if new_port:
+            # Try to select the new port
+            self._refresh_ports()
+            for desc, name in self._port_names_by_desc.items():
+                if name == new_port:
+                    self._port_desc_variable.set(desc)
+                    break
         self._has_opened_python_flasher = True
 
     def _get_intro_text(self):
-        result = (
+        return (
             tr("Connect your device to the computer and select corresponding port below")
             + "\n"
-            + "("
-            + tr('look for your device name, "USB Serial" or "UART"')
-            + ").\n"
             + tr("If you can't find it, you may need to install proper USB driver first.")
         )
-        if self.allow_webrepl:
-            result = (
-                ("Connecting via USB cable:")
-                + "\n"
-                + result
-                + "\n\n"
-                + ("Connecting via WebREPL:")
-                + "\n"
-                + (
-                    "If your device supports WebREPL, first connect via serial, make sure WebREPL is enabled\n"
-                    + "(import webrepl_setup), connect your computer and device to same network and select\n"
-                    + "< WebREPL > below"
-                )
-            )
 
-        return result
+    def _get_serial_frame(self):
+        if self._serial_frame is not None:
+            return self._serial_frame
+
+        self._serial_frame = TreeFrame(self, columns=("attribute", "value"), height=5)
+        tree = self._serial_frame.tree
+
+        tree.column("attribute", width=ems_to_pixels(10), anchor="w", stretch=False)
+        tree.column("value", width=ems_to_pixels(30), anchor="w", stretch=True)
+        tree.heading("attribute", text=tr("Attribute"), anchor="w")
+        tree.heading("value", text=tr("Value"), anchor="w")
+
+        tree["show"] = ""
+        return self._serial_frame
+
+    def _update_serial_frame(self):
+        tree_frame = self._get_serial_frame()
+        tree_frame.clear()
+
+        port = self.get_selected_port()
+        if port is None:
+            return
+
+        tree = tree_frame.tree
+        if port.vid and port.pid:
+            vidhex = hex(port.vid)[2:].upper().rjust(4, "0")
+            pidhex = hex(port.pid)[2:].upper().rjust(4, "0")
+            vidpid = f"{vidhex}:{pidhex}"
+        else:
+            vidpid = f"{port.vid}:{port.pid}"
+
+        atts = {
+            "Manufacturer:": port.manufacturer,
+            "Product:": port.product,
+            "VID/PID:": vidpid,
+            "Serial number:": port.serial_number,
+            "Interface:": port.interface,
+        }
+        for key, value in atts.items():
+            node_id = tree.insert("", "end")
+            tree.set(node_id, "attribute", key)
+            tree.set(node_id, "value", str(value or ""))
 
     def _get_webrepl_frame(self):
         if self._webrepl_frame is not None:
@@ -581,28 +655,35 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
 
         self._webrepl_frame = ttk.Frame(self)
 
+        instructions = (
+            "If your device supports WebREPL, first connect via serial, make sure WebREPL is enabled\n"
+            + "(import webrepl_setup) and connect your computer and device to the same network"
+        )
+        instr_label = ttk.Label(self._webrepl_frame, text=instructions)
+        instr_label.grid(row=0, column=0, sticky="nw", pady=(10, 0), columnspan=2)
+
         self._webrepl_url_var = create_string_var(
             get_workbench().get_option(self.backend_name + ".webrepl_url")
         )
         url_label = ttk.Label(self._webrepl_frame, text="URL (eg. %s)" % DEFAULT_WEBREPL_URL)
-        url_label.grid(row=0, column=0, sticky="nw", pady=(10, 0))
+        url_label.grid(row=1, column=0, sticky="nw", pady=(15, 0))
         url_entry = ttk.Entry(self._webrepl_frame, textvariable=self._webrepl_url_var, width=30)
-        url_entry.grid(row=1, column=0, sticky="nw")
+        url_entry.grid(row=2, column=0, sticky="nw")
 
         self._webrepl_password_var = create_string_var(
             get_workbench().get_option(self.backend_name + ".webrepl_password")
         )
         pw_label = ttk.Label(self._webrepl_frame, text=tr("Password"))
-        pw_label.grid(row=0, column=1, sticky="nw", pady=(10, 0), padx=(10, 0))
+        pw_label.grid(row=1, column=1, sticky="nw", pady=(10, 0), padx=(10, 0))
         pw_entry = ttk.Entry(self._webrepl_frame, textvariable=self._webrepl_password_var, width=15)
-        pw_entry.grid(row=1, column=1, sticky="nw", padx=(10, 0))
+        pw_entry.grid(row=2, column=1, sticky="nw", padx=(10, 0))
 
         return self._webrepl_frame
 
     def get_stored_port_desc(self):
         name = get_workbench().get_option(self.backend_name + ".port")
-        for desc in self._ports_by_desc:
-            if self._ports_by_desc[desc] == name:
+        for desc in self._port_names_by_desc:
+            if self._port_names_by_desc[desc] == name:
                 return desc
 
         return ""
@@ -610,6 +691,12 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
     def get_selected_port_name(self):
         port_desc = self._port_desc_variable.get()
         if not port_desc:
+            return None
+        return self._port_names_by_desc[port_desc]
+
+    def get_selected_port(self):
+        port_desc = self._port_desc_variable.get()
+        if not port_desc or port_desc not in self._ports_by_desc:
             return None
         return self._ports_by_desc[port_desc]
 
@@ -649,10 +736,21 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
                     self.backend_name + ".webrepl_password", self._webrepl_password_var.get()
                 )
 
+    def destroy(self):
+        if self._port_polling_after_id is not None:
+            self.after_cancel(self._port_polling_after_id)
+            self._port_polling_after_id = None
+
+        super().destroy()
+
     def _on_change_port(self, *args):
-        if self._port_desc_variable.get() == self._WEBREPL_OPTION_DESC:
+        if self._port_desc_variable.get() == WEBREPL_OPTION_DESC:
             self._get_webrepl_frame().grid(row=6, column=0, sticky="nwe")
+            if self._serial_frame and self._serial_frame.winfo_ismapped():
+                self._serial_frame.grid_forget()
         else:
+            self._get_serial_frame().grid(row=6, column=0, sticky="nwe", pady=(ems_to_pixels(1), 0))
+            self._update_serial_frame()
             if self._webrepl_frame and self._webrepl_frame.winfo_ismapped():
                 self._webrepl_frame.grid_forget()
 
@@ -665,7 +763,7 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
     def get_flashing_dialog_kinds(self) -> List[str]:
         return []
 
-    def _open_flashing_dialog(self, kind: str) -> None:
+    def _open_flashing_dialog(self, kind: str) -> Optional[str]:
         raise NotImplementedError()
 
     @property
@@ -980,12 +1078,7 @@ def get_serial_port_label(p) -> str:
     else:
         desc = p.description.replace(f" ({p.device})", "")
 
-    if desc == "USB Serial Device":
-        # Try finding something less generic
-        if p.product:
-            desc = p.product
-        elif p.interface:
-            desc = p.interface
+    desc = desc.replace("\x00", "").strip()
 
     return f"{desc} @ {p.device}"
 
@@ -1012,20 +1105,7 @@ def _list_serial_ports_uncached(skip_logging: bool = False):
         if sys.platform == "win32":
             os.path.islink = lambda _: False
 
-        if sys.platform == "win32":
-            try:
-                from adafruit_board_toolkit._list_ports_windows import comports
-            except ImportError:
-                logger.info("Falling back to serial.tools.list_ports.comports")
-                from serial.tools.list_ports import comports
-        elif sys.platform == "darwin":
-            try:
-                from adafruit_board_toolkit._list_ports_osx import comports
-            except ImportError:
-                logger.info("Falling back to serial.tools.list_ports.comports")
-                from serial.tools.list_ports import comports
-        else:
-            from serial.tools.list_ports import comports
+        from serial.tools.list_ports import comports
 
         irrelevant = ["/dev/cu.Bluetooth-Incoming-Port", "/dev/cu.iPhone-WirelessiAP"]
         result = []

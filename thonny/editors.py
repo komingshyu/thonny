@@ -6,7 +6,7 @@ import tkinter as tk
 import traceback
 from logging import exception, getLogger
 from tkinter import messagebox, simpledialog, ttk
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 from _tkinter import TclError
 
@@ -24,7 +24,7 @@ from thonny.common import (
     normpath_with_actual_case,
     universal_dirname,
 )
-from thonny.custom_notebook import CustomNotebook, CustomNotebookTab
+from thonny.custom_notebook import CustomNotebook, CustomNotebookPage, CustomNotebookTab
 from thonny.languages import tr
 from thonny.misc_utils import running_on_mac_os, running_on_windows
 from thonny.tktextext import rebind_control_a
@@ -58,7 +58,7 @@ class EditorCodeViewText(CodeViewText):
 
 
 class BaseEditor(ttk.Frame):
-    def __init__(self, master, propose_remove_line_numbers):
+    def __init__(self, master, propose_remove_line_numbers, suppress_events=False):
         ttk.Frame.__init__(self, master)
 
         self._code_view = CodeView(
@@ -67,6 +67,7 @@ class BaseEditor(ttk.Frame):
             font="EditorFont",
             text_class=EditorCodeViewText,
             cursor=get_beam_cursor(),
+            suppress_events=suppress_events
         )
         self._code_view.grid(row=0, column=0, sticky=tk.NSEW, in_=self)
 
@@ -82,7 +83,9 @@ class BaseEditor(ttk.Frame):
         self._code_view.set_line_length_margin(
             get_workbench().get_option("view.recommended_line_length")
         )
-        self._code_view.text.update_tabs()
+        self._code_view.text.update_tab_stops()
+        self._code_view.text.indent_width = get_workbench().get_option("edit.indent_width")
+        self._code_view.text.tab_width = get_workbench().get_option("edit.tab_width")
         self._code_view.text.event_generate("<<UpdateAppearance>>")
         self._code_view.grid_main_widgets()
 
@@ -123,6 +126,13 @@ class BaseEditor(ttk.Frame):
     def shorten_filename_for_title(self, path: str) -> str:
         return os.path.basename(path)
 
+    def get_text_widget(self) -> CodeViewText:
+        return self._code_view.text
+
+    def get_code_view(self):
+        # TODO: try to get rid of this
+        return self._code_view
+
 
 class Editor(BaseEditor):
     def __init__(self, master):
@@ -143,13 +153,6 @@ class Editor(BaseEditor):
         get_workbench().bind("ToplevelResponse", self._listen_for_toplevel_response, True)
 
         self.update_appearance()
-
-    def get_text_widget(self) -> tk.Text:
-        return self._code_view.text
-
-    def get_code_view(self):
-        # TODO: try to get rid of this
-        return self._code_view
 
     def get_content(self) -> str:
         return self._code_view.get_content()
@@ -265,19 +268,25 @@ class Editor(BaseEditor):
         return True
 
     def _load_local_file(self, filename, keep_undo=False):
-        with open(filename, "rb") as fp:
-            source = fp.read()
+        if os.path.exists(filename):
+            with open(filename, "rb") as fp:
+                source = fp.read()
+                exists = True
+        else:
+            source = b""
+            exists = False
 
         # Make sure Windows filenames have proper format
         filename = normpath_with_actual_case(filename)
         self._filename = filename
         self.update_file_type()
-        self._last_known_mtime = os.path.getmtime(self._filename)
+        if exists:
+            self._last_known_mtime = os.path.getmtime(self._filename)
 
         get_workbench().event_generate("Open", editor=self, filename=filename)
         if not self._code_view.set_content_as_bytes(source, keep_undo):
             return False
-        self.get_text_widget().edit_modified(False)
+        self.get_text_widget().edit_modified(not exists)
         self._code_view.focus_set()
         self.master.remember_recent_file(filename)
         get_workbench().event_generate("Opened", editor=self, filename=self._filename)
@@ -415,6 +424,9 @@ class Editor(BaseEditor):
                 ),
                 dialog_title=tr("Saving"),
             )
+
+            if result is None:
+                result = {"error": "Unknown error"}
 
             if "error" in result:
                 messagebox.showerror(tr("Could not save"), str(result["error"]))
@@ -626,6 +638,8 @@ class EditorNotebook(CustomNotebook):
         get_workbench().set_default("view.recommended_line_length", 0)
         get_workbench().set_default("edit.indent_with_tabs", False)
         get_workbench().set_default("edit.auto_refresh_saved_files", True)
+        get_workbench().set_default("edit.indent_width", 4)
+        get_workbench().set_default("edit.tab_width", 4)
         get_workbench().set_default("file.make_saved_shebang_scripts_executable", True)
 
         self._recent_menu = tk.Menu(
@@ -783,17 +797,8 @@ class EditorNotebook(CustomNotebook):
 
         get_workbench().createcommand("::tk::mac::OpenDocument", self._mac_open_document)
 
-    def load_startup_files(self):
-        """If no filename was sent from command line
-        then load previous files (if setting allows)"""
-
-        cmd_line_filenames = [
-            os.path.abspath(name) for name in sys.argv[1:] if os.path.exists(name)
-        ]
-
-        if len(cmd_line_filenames) > 0:
-            filenames = cmd_line_filenames
-        elif get_workbench().get_option("file.reopen_all_files"):
+    def load_previous_files(self):
+        if get_workbench().get_option("file.reopen_all_files"):
             filenames = get_workbench().get_option("file.open_files")
         elif get_workbench().get_option("file.current_file"):
             filenames = [get_workbench().get_option("file.current_file")]
@@ -807,9 +812,7 @@ class EditorNotebook(CustomNotebook):
 
             cur_file = get_workbench().get_option("file.current_file")
             # choose correct active file
-            if len(cmd_line_filenames) > 0:
-                self.show_file(cmd_line_filenames[0])
-            elif cur_file and os.path.exists(cur_file):
+            if cur_file and os.path.exists(cur_file):
                 self.show_file(cur_file)
             else:
                 self._cmd_new_file()
@@ -933,7 +936,7 @@ class EditorNotebook(CustomNotebook):
     def close_editor(self, editor, force=False):
         if not force and not self.check_allow_closing(editor):
             return
-        self._forget(editor)
+        self.forget(editor)
         editor.destroy()
 
     def _cmd_save_file(self):
@@ -1196,6 +1199,27 @@ class EditorNotebook(CustomNotebook):
                 editor.check_for_external_changes()
         finally:
             self._checking_external_changes = False
+
+    def after_insert(
+        self,
+        pos: Union[int, Literal["end"]],
+        page: CustomNotebookPage,
+        old_notebook: Optional[CustomNotebook],
+    ) -> None:
+        super().after_insert(pos, page, old_notebook)
+        editor: Editor = page.content
+        get_workbench().event_generate(
+            "InsertEditorToNotebook", pos=pos, editor=editor, text_widget=editor.get_text_widget()
+        )
+
+    def after_forget(
+        self, pos: int, page: CustomNotebookPage, new_notebook: Optional[CustomNotebook]
+    ) -> None:
+        super().after_forget(pos, page, new_notebook)
+        editor: Editor = page.content
+        get_workbench().event_generate(
+            "RemoveEditorFromNotebook", pos=pos, editor=editor, text_widget=editor.get_text_widget()
+        )
 
 
 def get_current_breakpoints():

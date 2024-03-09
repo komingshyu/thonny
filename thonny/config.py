@@ -4,12 +4,9 @@ import ast
 import configparser
 import datetime
 import os.path
-import sys
 import tkinter as tk
 from configparser import ConfigParser
 from logging import exception, getLogger
-
-from thonny import THONNY_USER_DIR
 
 logger = getLogger(__name__)
 
@@ -140,7 +137,7 @@ class ConfigurationManager:
             elif isinstance(value, str):
                 var = tk.StringVar(value=value)
             elif isinstance(value, float):
-                var = tk.StringVar(value=value)
+                var = tk.StringVar(value=str(value))
             else:
                 raise KeyError(
                     "Can't create Tk Variable for " + name + ". Type is " + str(type(value))

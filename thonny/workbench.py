@@ -23,10 +23,10 @@ from warnings import warn
 
 import thonny
 from thonny import (
-    THONNY_USER_DIR,
     assistance,
     get_runner,
     get_shell,
+    get_thonny_user_dir,
     is_portable,
     languages,
     ui_utils,
@@ -121,9 +121,11 @@ class Workbench(tk.Tk):
 
     """
 
-    def __init__(self) -> None:
+    def __init__(self, parsed_args: Dict[str, Any]) -> None:
         logger.info("Starting Workbench")
         thonny._workbench = self
+        self._initial_args = parsed_args
+        self._have_seen_visibility_events = False
         self.ready = False
         self._closing = False
         self._destroyed = False
@@ -206,12 +208,6 @@ class Workbench(tk.Tk):
 
         self._init_commands()
         self._init_icon()
-        try:
-            self._editor_notebook.load_startup_files()
-        except Exception:
-            self.report_exception()
-
-        self._editor_notebook.focus_set()
         logger.info("Opening views")
         self._try_action(self._restore_selected_views)
 
@@ -244,10 +240,17 @@ class Workbench(tk.Tk):
                 print(name)
         """
 
+        self.bind("<Visibility>", self._on_visibility, True)
         self.after(1, self._start_runner)  # Show UI already before waiting for the backend to start
-        self.after_idle(self.finalize_startup)
+
+    def _on_visibility(self, event):
+        if not self._have_seen_visibility_events:
+            self._have_seen_visibility_events = True
+            logger.info("First <Visibility> event")
+            self.after_idle(self.finalize_startup)
 
     def finalize_startup(self):
+        logger.info("Finalizing startup")
         self.ready = True
         self.event_generate("WorkbenchReady")
         self._editor_notebook.update_appearance()
@@ -259,6 +262,9 @@ class Workbench(tk.Tk):
                 "Using default settings",
                 master=self,
             )
+        self._editor_notebook.load_previous_files()
+        self._load_stuff_from_command_line(self._initial_args)
+        self._editor_notebook.focus_set()
         self.poll_events()
 
     def poll_events(self) -> None:
@@ -271,6 +277,28 @@ class Workbench(tk.Tk):
             self.event_generate(sequence, event)
 
         self._event_polling_id = self.after(20, self.poll_events)
+
+    def _load_stuff_from_command_line(self, parsed_args: Dict[str, Any]) -> None:
+        logger.info("Processing arguments %r", parsed_args)
+        try:
+            for file in parsed_args["files"]:
+                if not os.path.isabs(file):
+                    file = os.path.join(parsed_args["cwd"], file)
+                self._editor_notebook.show_file(file)
+
+            replayer_file = parsed_args["replayer"]
+            # NB! replayer_file may be empty string
+            if replayer_file is not None:
+                replayer_file = replayer_file.strip() or None
+                if replayer_file is not None and not os.path.isabs(replayer_file):
+                    replayer_file = os.path.join(parsed_args["cwd"], replayer_file)
+
+                from thonny.plugins import replayer
+
+                replayer.open_replayer(replayer_file)
+
+        except Exception:
+            self.report_exception()
 
     def _make_sanity_checks(self):
         home_dir = os.path.expanduser("~")
@@ -293,7 +321,7 @@ class Workbench(tk.Tk):
             self.report_exception()
 
     def _init_configuration(self) -> None:
-        self._configuration_manager = try_load_configuration(thonny.CONFIGURATION_FILE)
+        self._configuration_manager = try_load_configuration(thonny.get_configuration_file())
         self._configuration_pages = []  # type: List[Tuple[str, str, Type[tk.Widget], int]]
 
         self.set_default("general.single_instance", thonny.SINGLE_INSTANCE_DEFAULT)
@@ -451,7 +479,7 @@ class Workbench(tk.Tk):
             return getattr(m, "load_order_key", m.__name__)
 
         for m in sorted(modules, key=module_sort_key):
-            logger.debug("Loading %r", m.__file__)
+            logger.debug("Loading plugin %r from file %r", m.__name__, m.__file__)
             getattr(m, load_function_name)()
 
     def _init_fonts(self) -> None:
@@ -571,7 +599,7 @@ class Workbench(tk.Tk):
             self._ipc_requests = None
             return
 
-        self._ipc_requests = queue.Queue()  # type: queue.Queue[bytes]
+        self._ipc_requests = queue.Queue()  # type: queue.Queue[Dict[str, Any]]
         server_socket, actual_secret = self._create_server_socket()
         server_socket.listen(10)
 
@@ -587,9 +615,9 @@ class Workbench(tk.Tk):
                             data += new_data
                         else:
                             break
-                    proposed_secret, args = ast.literal_eval(data.decode("UTF-8"))
+                    proposed_secret, parsed_args = ast.literal_eval(data.decode("UTF-8"))
                     if proposed_secret == actual_secret:
-                        self._ipc_requests.put(args)
+                        self._ipc_requests.put(parsed_args)
                         # respond OK
                         client_socket.sendall(SERVER_SUCCESS.encode(encoding="utf-8"))
                         client_socket.shutdown(socket.SHUT_WR)
@@ -633,11 +661,13 @@ class Workbench(tk.Tk):
             tr("Exit"),
             self._on_close,
             default_sequence=select_sequence("<Alt-F4>", "<Command-q>", "<Control-q>"),
-            extra_sequences=["<Alt-F4>"]
-            if running_on_linux()
-            else ["<Control-q>"]
-            if running_on_windows()
-            else [],
+            extra_sequences=(
+                ["<Alt-F4>"]
+                if running_on_linux()
+                else ["<Control-q>"]
+                if running_on_windows()
+                else []
+            ),
         )
 
         self.add_command("show_options", "tools", tr("Options..."), self.show_options, group=180)
@@ -1787,13 +1817,19 @@ class Workbench(tk.Tk):
             logger.info("Adding view %r to notebook %s", view, notebook)
 
             # Compute the position among current visible views in this notebook
-            nb_views = self.get_option("layout.notebook_" + nb_name + ".views")
-            assert view_id in nb_views
+            nb_view_order: List[str] = self.get_option("layout.notebook_" + nb_name + ".views")
+            visible_nb_views = []
+            for page in notebook.pages:
+                other_view_id = getattr(page.content, "view_id", None)
+                if other_view_id is not None:
+                    visible_nb_views.append(other_view_id)
+
+            assert view_id not in visible_nb_views
+            assert view_id in nb_view_order
+
             visible_on_the_left = 0
-            for other_view_id in nb_views:
-                if not self.get_option("view." + other_view_id + ".visible"):
-                    continue
-                if other_view_id != view_id:
+            for visible_view_id in visible_nb_views:
+                if nb_view_order.index(visible_view_id) < nb_view_order.index(view_id):
                     visible_on_the_left += 1
                 else:
                     break
@@ -1856,56 +1892,74 @@ class Workbench(tk.Tk):
             assert view_id is not None
 
             logger.info(
-                "Moving view from %r to %r",
+                "Moving view %r from %r to %r",
+                view_id,
                 old_notebook.location_in_workbench,
                 new_notebook.location_in_workbench,
             )
-            new_views: List[str] = self.get_option(
+            new_notebook_views: List[str] = self.get_option(
                 "layout.notebook_" + new_notebook.location_in_workbench + ".views"
-            )
-            logger.info(
-                "Updating view order %r for notebook %r",
-                new_views,
-                new_notebook.location_in_workbench,
             )
 
             if new_notebook is not old_notebook:
-                old_views: List[str] = self.get_option(
+                old_notebook_views: List[str] = self.get_option(
                     "layout.notebook_" + old_notebook.location_in_workbench + ".views"
                 )
-                assert view_id in old_views
-                assert view_id not in new_views
-                old_views.remove(view_id)
+                logger.info(
+                    "Removing %r from views %r of notebook %r",
+                    view_id,
+                    old_notebook_views,
+                    new_notebook.location_in_workbench,
+                )
+                logger.info(
+                    "Adding %r to views %r of notebook %r",
+                    view_id,
+                    new_notebook_views,
+                    new_notebook.location_in_workbench,
+                )
+                assert view_id in old_notebook_views
+                assert view_id not in new_notebook_views
+                old_notebook_views.remove(view_id)
                 self.set_option(
-                    "layout.notebook_" + old_notebook.location_in_workbench + ".views", old_views
+                    "layout.notebook_" + old_notebook.location_in_workbench + ".views",
+                    old_notebook_views,
                 )
             else:
-                assert view_id in new_views
-                new_views.remove(view_id)  # will put it back soon
+                logger.info(
+                    "Moving %r among views %r of notebook %r",
+                    view_id,
+                    new_notebook_views,
+                    new_notebook.location_in_workbench,
+                )
+                assert view_id in new_notebook_views
+                new_notebook_views.remove(view_id)  # will put it back soon
 
-            assert view_id not in new_views
+            assert view_id not in new_notebook_views
 
             # Adjust saved view position in the configuration list. Not trivial, because the list also contains
             # hidden views but the notebook doesn't.
             index_in_nb = new_notebook.index(page.content)
             logger.info("index in nb %r", index_in_nb)
             if index_in_nb == len(new_notebook.pages) - 1:
-                new_views.append(view_id)
+                new_notebook_views.append(view_id)
                 logger.info("appending")
             else:
                 right_neighbor_page = new_notebook.pages[index_in_nb + 1]
                 right_neighbor_view_id = right_neighbor_page.content.view_id
-                right_neighbor_conf_index = new_views.index(right_neighbor_view_id)
+                right_neighbor_conf_index = new_notebook_views.index(right_neighbor_view_id)
                 logger.info(
                     "Right neighbor %r index %r", right_neighbor_view_id, right_neighbor_conf_index
                 )
-                new_views.insert(right_neighbor_conf_index, view_id)
+                new_notebook_views.insert(right_neighbor_conf_index, view_id)
 
             self.set_option(
-                "layout.notebook_" + new_notebook.location_in_workbench + ".views", new_views
+                "layout.notebook_" + new_notebook.location_in_workbench + ".views",
+                new_notebook_views,
             )
             logger.info(
-                "New view order for notebook %r: %r", new_notebook.location_in_workbench, new_views
+                "New view order for notebook %r: %r",
+                new_notebook.location_in_workbench,
+                self.get_option("layout.notebook_" + new_notebook.location_in_workbench + ".views"),
             )
             self.event_generate("MoveView", view=event.page.content, view_id=view_id)
 
@@ -2080,7 +2134,7 @@ class Workbench(tk.Tk):
             # shell may be not created yet
             pass
         else:
-            shell.update_tabs()
+            shell.update_appearance()
 
         tk_font.nametofont("EditorFont").configure(family=editor_font_family, size=editor_font_size)
         tk_font.nametofont("SmallEditorFont").configure(
@@ -2425,14 +2479,9 @@ class Workbench(tk.Tk):
                 return
 
             while not self._ipc_requests.empty():
-                args = self._ipc_requests.get()
-                try:
-                    for filename in args:
-                        if os.path.isfile(filename):
-                            self.get_editor_notebook().show_file(filename)
-
-                except Exception as e:
-                    logger.exception("Problem processing ipc request", exc_info=e)
+                parsed_args = self._ipc_requests.get()
+                logger.info("Handling IPC request %r", parsed_args)
+                self._load_stuff_from_command_line(parsed_args)
 
             self.become_active_window()
         finally:
@@ -2714,7 +2763,7 @@ class Workbench(tk.Tk):
         return self._toolbar
 
     def get_temp_dir(self, create_if_doesnt_exist=True):
-        path = os.path.join(THONNY_USER_DIR, "temp")
+        path = os.path.join(get_thonny_user_dir(), "temp")
         if create_if_doesnt_exist:
             os.makedirs(path, exist_ok=True)
         return path

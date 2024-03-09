@@ -17,8 +17,8 @@ from thonny.common import (
     ToplevelCommand,
     get_base_executable,
     is_private_python,
-    is_virtual_executable,
     normpath_with_actual_case,
+    running_in_virtual_environment,
 )
 from thonny.languages import tr
 from thonny.misc_utils import running_on_mac_os, running_on_windows
@@ -46,7 +46,7 @@ class LocalCPythonProxy(SubprocessProxy):
 
     def _get_launch_cwd(self):
         # use a directory which doesn't contain misleading modules
-        empty_dir = os.path.join(thonny.THONNY_USER_DIR, "leave_this_empty")
+        empty_dir = os.path.join(thonny.get_thonny_user_dir(), "leave_this_empty")
         os.makedirs(empty_dir, exist_ok=True)
         return empty_dir
 
@@ -473,7 +473,7 @@ def _get_interpreters():
 
 
 def get_default_cpython_executable_for_backend() -> str:
-    if is_private_python(sys.executable) and is_virtual_executable(sys.executable):
+    if is_private_python(sys.executable) and running_in_virtual_environment():
         # Private venv. Make an exception and use base Python for default backend.
         default_path = get_base_executable()
     else:

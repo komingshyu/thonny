@@ -209,7 +209,7 @@ add_defaults_and_downloads_to_variants(
         "info_url": "https://github.com/pimoroni/pimoroni-pico/releases",
         "_download_url_pattern": "https://github.com/pimoroni/pimoroni-pico/releases/download/v{version}/{id}-v{version}-micropython.uf2",
     },
-    ["1.21.0", "1.20.6"],
+    ["1.22.2", "1.20.6"],
     pimoroni_variants,
 )
 
@@ -271,7 +271,7 @@ pololu_variants = [
 all_variants += pololu_variants
 
 #####################################################
-simplified_microbits = [
+simplified_microbits_and_calliopes = [
     {
         "vendor": "BBC",
         "model": "micro:bit v1",
@@ -312,9 +312,17 @@ simplified_microbits = [
         ],
         "popular": True,
     },
+    {
+        "vendor": "Calliope",
+        "model": "Calliope mini 3",
+        "family": "nrf52",
+        "info_url": "https://github.com/calliope-mini/calliope-mini-micropython",
+        "downloads": [],
+        "popular": True,
+    },
 ]
-print(f"Adding {len(simplified_microbits)} simplified micro:bit-s")
-all_variants += simplified_microbits
+print(f"Adding {len(simplified_microbits_and_calliopes)} simplified micro:bit-s")
+all_variants += simplified_microbits_and_calliopes
 
 print(f"Got {len(all_variants)} boards")
 

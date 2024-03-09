@@ -1,10 +1,9 @@
-import sys
 from logging import getLogger
-from typing import List
+from typing import List, Optional
 
 from thonny import ui_utils
 from thonny.languages import tr
-from thonny.plugins.microbit import MicrobitFlashingDialog
+from thonny.plugins.micropython.daplink_flasher import DaplinkFlashingDialog
 from thonny.plugins.micropython.esptool_dialog import try_launch_esptool_dialog
 from thonny.plugins.micropython.mp_front import (
     BareMetalMicroPythonConfigPage,
@@ -86,11 +85,7 @@ class CircuitPythonProxy(BareMetalMicroPythonProxy):
         if (p.vid, p.pid) in get_uart_adapter_vids_pids():
             return True
 
-        if "adafruit_board_toolkit" in sys.modules or sys.platform == "linux":
-            # can trust p.interface value
-            return "CircuitPython CDC " in (p.interface or "")
-        else:
-            return super()._is_potential_port(p)
+        return "CircuitPython CDC " in (p.interface or "")
 
 
 class CircuitPythonConfigPage(BareMetalMicroPythonConfigPage):
@@ -100,14 +95,15 @@ class CircuitPythonConfigPage(BareMetalMicroPythonConfigPage):
     def get_flashing_dialog_kinds(self) -> List[str]:
         return ["UF2", "esptool", "BBC micro:bit"]
 
-    def _open_flashing_dialog(self, kind: str) -> None:
+    def _open_flashing_dialog(self, kind: str) -> Optional[str]:
         if kind == "UF2":
-            show_uf2_installer(self, firmware_name="CircuitPython")
+            return show_uf2_installer(self, firmware_name="CircuitPython")
         elif kind == "esptool":
-            try_launch_esptool_dialog(self.winfo_toplevel(), "CircuitPython")
+            return try_launch_esptool_dialog(self.winfo_toplevel(), "CircuitPython")
         elif kind == "BBC micro:bit":
-            dlg = MicrobitFlashingDialog(self, "CircuitPython")
+            dlg = DaplinkFlashingDialog(self, "CircuitPython")
             ui_utils.show_dialog(dlg)
+            return None
 
     def _get_flasher_link_title(self) -> str:
         return tr("Install or update %s") % "CircuitPython"

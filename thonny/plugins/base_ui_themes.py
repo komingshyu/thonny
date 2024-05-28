@@ -213,7 +213,9 @@ def clam() -> BasicUiThemeSettings:
                 "darkcolor": [("pressed", darker)],
             },
         },
-        "CustomToolbutton": {"configure": {"background": frame, "activebackground": darker}},
+        "CustomToolbutton": {
+            "configure": {"background": frame, "activebackground": darker, "foreground": defaultfg}
+        },
         "CustomNotebook": {
             "configure": {
                 "bordercolor": darker,
@@ -565,7 +567,6 @@ def windows() -> CompoundUiThemeSettings:
             },
             "ViewToolbar.TFrame": {"configure": {"background": "SystemWindow"}},
             "ViewToolbar.Toolbutton": {"configure": {"background": "SystemWindow"}},
-            "ViewToolbar.CustomToolbutton": {"configure": {"background": "SystemWindow"}},
             "ViewTab.TLabel": {
                 "configure": {"background": "SystemWindow", "padding": [scale(5), 0]}
             },
@@ -603,6 +604,7 @@ def windows() -> CompoundUiThemeSettings:
                     "indicatorheight": 1,
                 }
             },
+            "TextPanedWindow": {"configure": {"background": "systemWindow"}},
         },
     ]
 
@@ -662,6 +664,7 @@ def enhanced_clam() -> CompoundUiThemeSettings:
                 }
             },
             "Inactive.ViewTab.TLabel": {"map": {"relief": [("hover", "raised")]}},
+            "TextPanedWindow": {"configure": {"background": "white"}},
         },
     ]
 
@@ -672,12 +675,30 @@ def enhanced_aqua() -> CompoundUiThemeSettings:
         # _paned_window_settings(),
         _menu_settings(),
         {
-            "Url.TLabel": {"configure": {"foreground": "#003399"}},
+            "Tip.TLabel": {
+                "configure": {
+                    "background": "systemWindowBackgroundColor3",
+                    "foreground": "systemTextColor",
+                }
+            },
+            "Tip.TFrame": {"configure": {"background": "systemWindowBackgroundColor3"}},
+        },
+        {
+            "Text": {
+                "configure": {
+                    "background": "systemTextBackgroundColor",
+                    "foreground": "systemTextColor",
+                }
+            },
+            "Url.TLabel": {
+                "configure": {"foreground": "#003399"}
+            },  # will be overridden by enhanced_aqua_dark_overrides
             "ViewToolbar.TFrame": {
                 "configure": {"background": "systemWindowBackgroundColor"}
             },  # TODO:
-            "ViewToolbar.Toolbutton": {"configure": {"background": "systemWindowBackgroundColor1"}},
+            "ViewToolbar.Toolbutton": {"configure": {"background": "systemWindowBackgroundColor"}},
             "TPanedWindow": {"configure": {"background": "systemDialogBackgroundActive"}},
+            "TextPanedWindow": {"configure": {"background": "systemTextBackgroundColor"}},
             "TFrame": {"configure": {"background": "systemDialogBackgroundActive"}},
             "ViewTab.TLabel": {"configure": {"padding": [scale(5), 0]}},
             "Tab": {"map": {"foreground": [("selected", "systemSelectedTabTextColor")]}},
@@ -689,10 +710,14 @@ def enhanced_aqua() -> CompoundUiThemeSettings:
                 }
             },
             "Inactive.ViewTab.TLabel": {"map": {"relief": [("hover", "raised")]}},
+            "TNotebook": {
+                "configure": {"tabmargins": [10, 0], "tabposition": "n", "padding": [0, 0, 0, 0]}
+            },
             "CustomToolbutton": {
                 "configure": {
                     "background": "systemWindowBackgroundColor",
                     "activebackground": "systemWindowBackgroundColor3",
+                    "foreground": "systemLabelColor",
                 }
             },
             "CustomNotebook": {
@@ -705,6 +730,14 @@ def enhanced_aqua() -> CompoundUiThemeSettings:
                     "background": "systemWindowBackgroundColor2",
                     "activebackground": "systemWindowBackgroundColor",
                     "indicatorbackground": "systemWindowBackgroundColor",
+                }
+            },
+            "Listbox": {
+                "configure": {
+                    "background": "SystemTextBackgroundColor",
+                    "foreground": "SystemTextColor",
+                    "selectBackground": "SystemSelectedTextBackgroundColor",
+                    "selectForeground": "SystemSelectedTextColor",
                 }
             },
         },

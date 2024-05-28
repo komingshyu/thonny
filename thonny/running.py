@@ -22,7 +22,16 @@ from logging import getLogger
 from threading import Thread
 from time import sleep
 from tkinter import messagebox, ttk
-from typing import Any, Callable, Dict, List, Optional, Set, Union  # @UnusedImport; @UnusedImport
+from typing import (  # @UnusedImport; @UnusedImport
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+)
 
 import thonny
 from thonny import (
@@ -40,6 +49,7 @@ from thonny.common import (
     CommandToBackend,
     DebuggerCommand,
     DebuggerResponse,
+    DistInfo,
     EOFCommand,
     InlineCommand,
     InlineResponse,
@@ -88,6 +98,9 @@ INTERRUPT_SEQUENCE = "<Control-c>"
 
 CSI_TERMINATOR = re.compile("[@-~]")
 OSC_TERMINATOR = re.compile(r"\a|\x1B\\")
+
+TERMINATION_TIMEOUT = 2
+TERMINATION_POLL_INTERVAL = 0.02
 
 # other components may turn it on in order to avoid grouping output lines into one event
 io_animation_required = False
@@ -871,9 +884,6 @@ class BackendProxy(ABC):
     def get_backend_name(self):
         return type(self).backend_name
 
-    def get_pip_gui_class(self):
-        return None
-
     @abstractmethod
     def interrupt(self):
         """Tries to interrupt current command without resetting the backend"""
@@ -887,12 +897,10 @@ class BackendProxy(ABC):
         ...
 
     @abstractmethod
-    def is_connected(self):
-        ...
+    def is_connected(self): ...
 
     @abstractmethod
-    def has_local_interpreter(self):
-        ...
+    def has_local_interpreter(self): ...
 
     @abstractmethod
     def get_target_executable(self) -> Optional[str]:
@@ -933,8 +941,7 @@ class BackendProxy(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def can_debug(self) -> bool:
-        ...
+    def can_debug(self) -> bool: ...
 
     def ready_for_remote_file_operations(self):
         return False
@@ -960,8 +967,7 @@ class BackendProxy(ABC):
         """
 
     @abstractmethod
-    def can_run_in_terminal(self) -> bool:
-        ...
+    def can_run_in_terminal(self) -> bool: ...
 
     def run_script_in_terminal(self, script_path, args, interactive, keep_open):
         raise NotImplementedError()
@@ -971,6 +977,59 @@ class BackendProxy(ABC):
 
     def open_custom_system_shell(self) -> None:
         raise NotImplementedError()
+
+    def get_package_installation_confirmations(self, dist_info: DistInfo) -> List[str]:
+        if "thonny" in dist_info.name.lower():
+            return [
+                tr(
+                    "Looks like you are installing a Thonny-related package.\n"
+                    + "If you meant to install a Thonny plugin, then you should\n"
+                    + "choose 'Tools → Manage plugins...' instead\n"
+                    + "\n"
+                    + "Are you sure you want to install %s for the back-end?"
+                )
+                % dist_info.name
+            ]
+
+        return []
+
+    def supports_packages(self) -> bool:
+        return True
+
+    @abstractmethod
+    def get_packages_target_dir_with_comment(self) -> Tuple[Optional[str], Optional[str]]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def can_install_packages_from_files(self) -> bool:
+        raise NotImplementedError()
+
+    def normalize_target_path(self, path: str) -> str:
+        return path
+
+    @classmethod
+    def search_packages(cls, query: str) -> List[DistInfo]:
+        from thonny.plugins.pip_gui import perform_pypi_search
+
+        return perform_pypi_search(query)
+
+    @classmethod
+    def get_package_info_from_index(cls, name: str, version: str) -> DistInfo:
+        from thonny.plugins.pip_gui import download_dist_info_from_pypi
+
+        return download_dist_info_from_pypi(name, version)
+
+    def get_version_list_from_index(self, name: str) -> List[str]:
+        from thonny.plugins.pip_gui import try_download_version_list_from_pypi
+
+        return try_download_version_list_from_pypi(name)
+
+    def get_search_button_text(self) -> str:
+        return tr("Search on PyPI")
+
+    @classmethod
+    def get_stubs_location(cls):
+        return os.path.join(thonny.get_thonny_user_dir(), "stubs", cls.backend_name)
 
 
 class SubprocessProxy(BackendProxy, ABC):
@@ -1182,8 +1241,19 @@ class SubprocessProxy(BackendProxy, ABC):
 
     def _close_backend(self):
         if self._proc is not None and self._proc.poll() is None:
-            logger.info("Killing backend process")
-            self._proc.kill()
+            logger.info("Trying to terminate backend process")
+            self._proc.terminate()
+            # Wait a bit
+            for i in range(int(TERMINATION_TIMEOUT / TERMINATION_POLL_INTERVAL)):
+                time.sleep(TERMINATION_POLL_INTERVAL)
+                if self._proc.poll() is not None:
+                    logger.info("Terminated in %s seconds", (i + 1) * TERMINATION_POLL_INTERVAL)
+                    break
+            else:
+                logger.info(
+                    "Could terminate backend process in %s seconds. Will kill.", TERMINATION_TIMEOUT
+                )
+                self._proc.kill()
 
         self._proc = None
         self._response_queue = None

@@ -62,6 +62,7 @@ from thonny.ui_utils import (
     register_latin_shortcut,
     select_sequence,
     sequence_to_accelerator,
+    set_windows_titlebar_darkness,
     shift_is_pressed,
 )
 
@@ -664,9 +665,7 @@ class Workbench(tk.Tk):
             extra_sequences=(
                 ["<Alt-F4>"]
                 if running_on_linux()
-                else ["<Control-q>"]
-                if running_on_windows()
-                else []
+                else ["<Control-q>"] if running_on_windows() else []
             ),
         )
 
@@ -1320,6 +1319,7 @@ class Workbench(tk.Tk):
         proxy_class.backend_name = name  # type: ignore
         proxy_class.backend_description = description  # type: ignore
         config_page_constructor.backend_name = name
+        config_page_constructor.proxy_class = proxy_class
 
     def add_ui_theme(
         self,
@@ -1342,10 +1342,10 @@ class Workbench(tk.Tk):
 
         self._syntax_themes[name] = (parent, settings)
 
-    def get_usable_ui_theme_names(self) -> Sequence[str]:
+    def get_usable_ui_theme_names(self) -> List[str]:
         return sorted([name for name in self._ui_themes if self._ui_themes[name][0] is not None])
 
-    def get_syntax_theme_names(self) -> Sequence[str]:
+    def get_syntax_theme_names(self) -> List[str]:
         return sorted(self._syntax_themes.keys())
 
     def get_ui_mode(self) -> str:
@@ -1434,6 +1434,10 @@ class Workbench(tk.Tk):
 
         self.update_fonts()
 
+        if running_on_windows():
+            darkness_value = int(self.uses_dark_ui_theme())
+            set_windows_titlebar_darkness(self, darkness_value)
+
     def _apply_syntax_theme(self, name: str) -> None:
         def get_settings(name):
             try:
@@ -1487,7 +1491,7 @@ class Workbench(tk.Tk):
         elif "Kind of Aqua" in available_themes:
             return "Kind of Aqua"
         else:
-            return "clam"
+            return "Enhanced Clam"
 
     def get_default_syntax_theme(self) -> str:
         if self.uses_dark_ui_theme():
@@ -1631,9 +1635,15 @@ class Workbench(tk.Tk):
     def get_backends(self) -> Dict[str, BackendSpec]:
         return self._backends
 
+    def get_options_snapshot(self) -> Dict[str, Any]:
+        return self._configuration_manager.get_snapshot()
+
     def get_option(self, name: str, default=None) -> Any:
         # Need to return Any, otherwise each typed call site needs to cast
         return self._configuration_manager.get_option(name, default)
+
+    def has_option(self, name: str) -> bool:
+        return self._configuration_manager.get_option(name, "missingOption") != "missingOption"
 
     def set_option(self, name: str, value: Any) -> None:
         self._configuration_manager.set_option(name, value)

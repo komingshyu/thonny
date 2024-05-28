@@ -15,12 +15,11 @@ from typing import Any, Dict, List, Optional, Tuple
 from thonny import get_runner
 from thonny.common import UserError
 from thonny.languages import tr
+from thonny.misc_utils import download_and_parse_json, download_bytes
 from thonny.ui_utils import AdvancedLabel, MappingCombobox, set_text_if_different
 from thonny.workdlg import WorkDialog
 
 logger = getLogger(__name__)
-
-FAKE_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_9_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/35.0.1916.47 Safari/537.36"
 
 FAMILY_CODES_TO_NAMES = {
     "rp2": "RP2",
@@ -64,12 +63,10 @@ class BaseFlashingDialog(WorkDialog, ABC):
         super().__init__(master, autostart=False)
 
     @abstractmethod
-    def get_variants_url(self) -> str:
-        ...
+    def get_variants_url(self) -> str: ...
 
     @abstractmethod
-    def get_target_label(self) -> str:
-        ...
+    def get_target_label(self) -> str: ...
 
     def populate_main_frame(self):
         epadx = self.get_large_padding()
@@ -79,7 +76,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
 
         target_label = ttk.Label(self.main_frame, text=self.get_target_label())
         target_label.grid(row=1, column=1, sticky="e", padx=(epadx, 0), pady=(epady, 0))
-        self._target_combo = MappingCombobox(self.main_frame, exportselection=False)
+        self._target_combo = MappingCombobox(self.main_frame, mapping={}, exportselection=False)
         self._target_combo.grid(
             row=1, column=2, sticky="nsew", padx=(ipadx, epadx), pady=(epady, 0)
         )
@@ -108,7 +105,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
         variant_label = ttk.Label(self.main_frame, text=f"variant")
         variant_label.grid(row=6, column=1, sticky="e", padx=(epadx, 0), pady=(ipady, 0))
         self._variant_combo = MappingCombobox(
-            self.main_frame, exportselection=False, state="disabled"
+            self.main_frame, mapping={}, exportselection=False, state="disabled"
         )
         self._variant_combo.grid(
             row=6, column=2, sticky="nsew", padx=(ipadx, epadx), pady=(ipady, 0)
@@ -118,7 +115,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
         version_label = ttk.Label(self.main_frame, text="version")
         version_label.grid(row=7, column=1, sticky="e", padx=(epadx, 0), pady=(ipady, 0))
         self._version_combo = MappingCombobox(
-            self.main_frame, exportselection=False, state="disabled"
+            self.main_frame, mapping={}, exportselection=False, state="disabled"
         )
         self._version_combo.grid(
             row=7, column=2, sticky="nsew", padx=(ipadx, epadx), pady=(ipady, 0)
@@ -135,8 +132,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
         self.main_frame.columnconfigure(2, weight=1)
 
     @abstractmethod
-    def get_families_mapping(self) -> Dict[str, str]:
-        ...
+    def get_families_mapping(self) -> Dict[str, str]: ...
 
     def update_ui(self):
         for widget in self.main_frame.winfo_children():
@@ -191,8 +187,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
         super().update_ui()
 
     @abstractmethod
-    def find_targets(self) -> Dict[str, TargetInfo]:
-        ...
+    def find_targets(self) -> Dict[str, TargetInfo]: ...
 
     def show_new_targets(self, targets: Dict[str, TargetInfo]) -> None:
         self._target_combo.set_mapping(targets)
@@ -202,8 +197,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
             self._target_combo.select_none()
 
     @abstractmethod
-    def compute_target_info_text_and_label(self, target: TargetInfo) -> Tuple[str, str]:
-        ...
+    def compute_target_info_text_and_label(self, target: TargetInfo) -> Tuple[str, str]: ...
 
     def _update_target_info(self):
         current_target = self._target_combo.get_selected_value()
@@ -301,27 +295,15 @@ class BaseFlashingDialog(WorkDialog, ABC):
         return result
 
     @abstractmethod
-    def _variant_can_be_recommended_for_target(self, variant: Dict[str, Any], target: TargetInfo):
-        ...
+    def _variant_can_be_recommended_for_target(
+        self, variant: Dict[str, Any], target: TargetInfo
+    ): ...
 
     def _download_variants(self):
         logger.info("Downloading %r", self.get_variants_url())
-        import json
-        from urllib.request import urlopen
 
         try:
-            req = urllib.request.Request(
-                self.get_variants_url(),
-                data=None,
-                headers={
-                    "User-Agent": FAKE_USER_AGENT,
-                    "Cache-Control": "no-cache",
-                },
-            )
-            with urlopen(req) as fp:
-                json_str = fp.read().decode("UTF-8")
-                # logger.debug("Variants info: %r", json_str)
-            variants = json.loads(json_str)
+            variants = download_and_parse_json(self.get_variants_url())
             logger.info("Got %r variants", len(variants))
             self._tweak_variants(variants)
         except Exception:
@@ -354,22 +336,11 @@ class BaseFlashingDialog(WorkDialog, ABC):
             new_regex = variant.get("latest_prerelease_regex", None)
             if new_regex:
                 latest_prerelease_regex = new_regex
-                import json
-                import urllib.request
 
                 logger.info("Downloading %r", variant["info_url"])
                 try:
-                    req = urllib.request.Request(
-                        variant["info_url"],
-                        data=None,
-                        headers={
-                            "User-Agent": FAKE_USER_AGENT,
-                            "Cache-Control": "no-cache",
-                        },
-                    )
-                    with urllib.request.urlopen(req) as fp:
-                        html_str = fp.read().decode("UTF-8", errors="replace")
-                        # logger.debug("Variants info: %r", json_str)
+                    html_str = download_bytes(variant["info_url"]).decode("UTF-8", errors="replace")
+                    # logger.debug("Variants info: %r", json_str)
 
                     match = re.search(latest_prerelease_regex, html_str)
                     if match:
@@ -540,8 +511,7 @@ class BaseFlashingDialog(WorkDialog, ABC):
         download_info: Optional[Dict[str, str]],
         target_info: Optional[TargetInfo],
         work_options: Dict[str, Any],
-    ) -> bool:
-        ...
+    ) -> bool: ...
 
     def register_settings_changed(self, event=None):
         if self._state == "done":

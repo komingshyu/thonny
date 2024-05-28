@@ -1,3 +1,4 @@
+import dataclasses
 import os
 import shutil
 import sys
@@ -7,17 +8,32 @@ from textwrap import dedent
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple
 
+from packaging.utils import canonicalize_name
+
 from thonny import get_runner, get_shell, get_workbench, running, ui_utils
-from thonny.common import CommandToBackend, EOFCommand, ImmediateCommand, InlineCommand
+from thonny.common import CommandToBackend, DistInfo, EOFCommand, ImmediateCommand, InlineCommand
+from thonny.config_ui import (
+    add_option_checkbox,
+    add_option_combobox,
+    add_option_entry,
+    add_text_row,
+    add_vertical_separator,
+)
 from thonny.languages import tr
-from thonny.misc_utils import list_volumes
+from thonny.misc_utils import download_and_parse_json, levenshtein_distance
 from thonny.plugins.backend_config_page import (
-    BackendDetailsConfigPage,
     BaseSshProxyConfigPage,
+    TabbedBackendDetailsConfigurationPage,
     get_ssh_password,
 )
 from thonny.running import SubprocessProxy
-from thonny.ui_utils import TreeFrame, create_string_var, create_url_label, ems_to_pixels
+from thonny.ui_utils import (
+    TreeFrame,
+    create_string_var,
+    create_url_label,
+    ems_to_pixels,
+    get_last_grid_row,
+)
 
 logger = getLogger(__name__)
 
@@ -26,29 +42,33 @@ WEBREPL_OPTION_DESC = "< WebREPL >"
 WEBREPL_PORT_VALUE = "webrepl"
 VIDS_PIDS_TO_AVOID_IN_GENERIC_BACKEND = set()
 
+MICROPYTHON_LIB_INDEX_URL = "https://micropython.org/pi/v2/index.json"
+MICROPYTHON_LIB_METADATA_URL = (
+    "https://raw.githubusercontent.com/thonny/thonny/master/data/micropython-lib-metadata.json"
+)
+_mp_lib_index_cache = None
+_mp_lib_metadata_cache = None
+
 
 class MicroPythonProxy(SubprocessProxy):
     def __init__(self, clean):
         self._lib_dirs = []
         super().__init__(clean, running.get_front_interpreter_for_subprocess())
 
-    def get_pip_gui_class(self):
-        return None
-
-    def get_pip_target_dir(self) -> Optional[str]:
+    def get_packages_target_dir_with_comment(self) -> Tuple[Optional[str], Optional[str]]:
         lib_dirs = self.get_lib_dirs()
         if not lib_dirs:
-            return None
+            return None, "could not determine target directory"
 
         for path in lib_dirs:
             if path.startswith("/home/"):
-                return path
+                return path, None
 
         for path in ["/lib", "/flash/lib"]:
             if path in lib_dirs:
-                return path
+                return path, None
 
-        return lib_dirs[0]
+        return lib_dirs[0], None
 
     def get_lib_dirs(self):
         return self._lib_dirs
@@ -84,6 +104,203 @@ class MicroPythonProxy(SubprocessProxy):
     def is_valid_configuration(cls, conf: Dict[str, Any]) -> bool:
         return True
 
+    def get_package_installation_confirmations(self, dist_info: DistInfo) -> List[str]:
+        result = super().get_package_installation_confirmations(dist_info)
+
+        if not self.looks_like_suitable_package(dist_info):
+            result.append(
+                tr(
+                    "This doesn't look like MicroPython/CircuitPython package.\n"
+                    "Are you sure you want to install it?"
+                )
+            )
+        return result
+
+    def looks_like_suitable_package(self, dist_info: DistInfo) -> bool:
+        if dist_info.source == "micropython-lib":
+            return True
+
+        for token in ["micropython", "circuitpython", "pycopy"]:
+            if token in dist_info.name.lower():
+                return True
+
+        logger.debug("package classifiers: %s", dist_info.classifiers)
+        for classifier in [
+            "Programming Language :: Python :: Implementation :: MicroPython",
+            "Programming Language :: Python :: Implementation :: CircuitPython",
+        ]:
+            if classifier in dist_info.classifiers:
+                return True
+
+        return False
+
+    @classmethod
+    def search_packages(cls, query: str) -> List[DistInfo]:
+        from thonny.plugins.pip_gui import perform_pypi_search
+
+        norm_query = canonicalize_name(query.strip())
+
+        def distance(item: DistInfo) -> int:
+            norm_name = canonicalize_name(item.name)
+            if norm_name == norm_query:
+                # don't argue with exact match
+                return 0
+
+            result = levenshtein_distance(norm_name, norm_query)
+
+            if "micropython" in norm_query and item.source == "micropython-lib":
+                # direct the user towards micropython-lib and names without "micropython"
+                new_result = levenshtein_distance(
+                    norm_name, norm_query.replace("micropython", "").strip("-")
+                )
+                if new_result < result:
+                    result = new_result
+
+            # try matching without qualifiers
+            simple_name = norm_name
+            simple_query = norm_query
+            for qualifier in ["adafruit-circuitpython", "circuitpython", "micropython"]:
+                simple_name = simple_name.replace(qualifier, "").replace("--", "-").strip("-")
+                simple_query = simple_query.replace(qualifier, "").replace("--", "-").strip("-")
+
+            new_result = levenshtein_distance(simple_name, simple_query)
+            if new_result < result:
+                result = new_result + 1
+
+            return result
+
+        mp_lib_result = cls._get_micropython_lib_dist_infos()
+        pypi_result = perform_pypi_search(query)
+        if "micropython" not in query.lower() and "circuitpython" not in query.lower():
+            pypi_result += perform_pypi_search("micropython " + query)
+            pypi_result += perform_pypi_search("circuitpython " + query)
+
+        combined_result = []
+        mp_lib_names = set()
+
+        for item in mp_lib_result:
+            combined_result.append(item)
+            mp_lib_names.add(canonicalize_name(item.name))
+
+        for item in pypi_result:
+            norm_name = canonicalize_name(item.name)
+            if norm_name in mp_lib_names:
+                # will be shadowed by micropython-lib
+                continue
+
+            if item in combined_result:
+                # avoid duplicates
+                continue
+
+            lower_summary = (item.summary and item.summary.lower()) or ""
+            mentions_right_tokens = any(
+                (
+                    token in norm_name or token in lower_summary
+                    for token in ["micropython", "circuitpython"]
+                )
+            )
+            if norm_name == norm_query or mentions_right_tokens:
+                combined_result.append(item)
+
+        sorted_result = sorted(combined_result, key=distance)
+        filtered_result = filter(lambda x: distance(x) < 4, sorted_result[:20])
+
+        return list(filtered_result)
+
+    @classmethod
+    def _get_micropython_lib_dist_infos(cls) -> List[DistInfo]:
+        data = cls._get_micropython_lib_index_data()
+
+        result = []
+        for package in data["packages"]:
+            result.append(
+                cls._augment_dist_info(
+                    DistInfo(
+                        name=package["name"],
+                        version=package["version"],
+                        summary=package["description"] or None,
+                        source="micropython-lib",
+                    )
+                )
+            )
+
+        logger.info("Got %r items", len(result))
+        return result
+
+    @classmethod
+    def _get_micropython_lib_index_data(cls) -> Dict[str, Any]:
+        global _mp_lib_index_cache
+        if not _mp_lib_index_cache:
+            logger.info("Fetching %r", MICROPYTHON_LIB_INDEX_URL)
+            _mp_lib_index_cache = download_and_parse_json(MICROPYTHON_LIB_INDEX_URL, timeout=10)
+
+        return _mp_lib_index_cache
+
+    @classmethod
+    def _get_micropython_lib_metadata(cls) -> Dict[str, Any]:
+        global _mp_lib_metadata_cache
+        if not _mp_lib_metadata_cache:
+            _mp_lib_metadata_cache = download_and_parse_json(
+                MICROPYTHON_LIB_METADATA_URL, timeout=10
+            )
+
+        return _mp_lib_metadata_cache
+
+    @classmethod
+    def get_package_info_from_index(cls, name: str, version: str) -> DistInfo:
+        # Try mp.org first
+        index_data = cls._get_micropython_lib_index_data()
+
+        for package in index_data["packages"]:
+            if canonicalize_name(package["name"]) == canonicalize_name(name):
+                if version not in package["versions"]["py"]:
+                    raise RuntimeError(
+                        f"Could not find version {version} of {name} in micropython-lib index"
+                    )
+
+                return cls._augment_dist_info(
+                    DistInfo(
+                        name=package["name"],
+                        version=version,
+                        source="micropython-lib",
+                        author=package.get("author") or None,
+                        summary=package.get("description") or None,
+                        license=package.get("license") or None,
+                    )
+                )
+                # TODO: deps?
+
+        return super().get_package_info_from_index(name, version)
+
+    def get_version_list_from_index(self, name: str) -> List[str]:
+        # Try mp.org first
+        index_data = self._get_micropython_lib_index_data()
+
+        for package in index_data["packages"]:
+            if canonicalize_name(package["name"]) == canonicalize_name(name):
+                return package["versions"].get("py", [])
+
+        return super().get_version_list_from_index(name)
+
+    def get_search_button_text(self) -> str:
+        return tr("Search micropython-lib and PyPI")
+
+    @classmethod
+    def _augment_dist_info(cls, dist_info: DistInfo) -> DistInfo:
+        metadata = cls._get_micropython_lib_metadata()
+        norm_name = canonicalize_name(dist_info.name)
+        home_page = dist_info.home_page
+        summary = dist_info.summary
+
+        if (home_page is None or summary is None) and norm_name in metadata:
+            if home_page is None:
+                home_page = metadata[norm_name].get("project_url")
+            if summary is None:
+                summary = metadata[norm_name].get("description")
+            return dataclasses.replace(dist_info, summary=summary, home_page=home_page)
+
+        return dist_info
+
 
 class BareMetalMicroPythonProxy(MicroPythonProxy):
     def __init__(self, clean):
@@ -95,11 +312,6 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
 
     def get_target_executable(self) -> Optional[str]:
         return None
-
-    def get_pip_gui_class(self):
-        from thonny.plugins.micropython.pip_gui import MicroPythonPipDialog
-
-        return MicroPythonPipDialog
 
     def destroy(self, for_restart: bool = False):
         super().destroy(for_restart=for_restart)
@@ -135,6 +347,10 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
         if self._port is None:
             return
 
+        # refresh the ports cache, so that the next uncached request (in BackendRestart handler)
+        # is less likely to race with the back-end process trying to open a port and getting a
+        # PermissionError (has happened in Windows)
+        list_serial_ports(max_cache_age=0, skip_logging=False)
         super()._start_background_process(clean=clean, extra_args=extra_args)
 
     def _get_launcher_with_args(self):
@@ -143,12 +359,12 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
             "port": self._port,
             "dtr": get_workbench().get_option(self.backend_name + ".dtr"),
             "rts": get_workbench().get_option(self.backend_name + ".rts"),
-            "submit_mode": get_workbench().get_option(self.backend_name + ".submit_mode"),
+            "submit_mode": self._get_submit_mode(),
+            "write_block_size": self._get_write_block_size(),
+            "write_block_delay": self._get_write_block_delay(),
             "interrupt_on_connect": get_workbench().get_option(
                 self.backend_name + ".interrupt_on_connect"
             ),
-            "write_block_size": self._get_write_block_size(),
-            "write_block_delay": self._get_write_block_delay(),
             "proxy_class": self.__class__.__name__,
         }
         if self._port == WEBREPL_PORT_VALUE:
@@ -175,11 +391,23 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
 
         return thonny.plugins.micropython.bare_metal_backend.__file__
 
+    def _get_submit_mode(self):
+        if self._port == WEBREPL_PORT_VALUE:
+            return get_workbench().get_option(self.backend_name + ".webrepl_submit_mode")
+        else:
+            return get_workbench().get_option(self.backend_name + ".submit_mode")
+
     def _get_write_block_size(self):
-        return get_workbench().get_option(self.backend_name + ".write_block_size")
+        if self._port == WEBREPL_PORT_VALUE:
+            return get_workbench().get_option(self.backend_name + ".webrepl_write_block_size")
+        else:
+            return get_workbench().get_option(self.backend_name + ".write_block_size")
 
     def _get_write_block_delay(self):
-        return get_workbench().get_option(self.backend_name + ".write_block_delay")
+        if self._port == WEBREPL_PORT_VALUE:
+            return get_workbench().get_option(self.backend_name + ".webrepl_write_block_delay")
+        else:
+            return get_workbench().get_option(self.backend_name + ".write_block_delay")
 
     def interrupt(self):
         # Don't interrupt local process, but direct it to device
@@ -423,10 +651,11 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
             "as main script, select 'Tools => Open system shell' and press Ctrl+D",
         )
 
+    def can_install_packages_from_files(self) -> bool:
+        return True
 
-class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
-    backend_name = None  # Will be overwritten on Workbench.add_backend
 
+class BareMetalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
     def __init__(self, master):
         super().__init__(master)
 
@@ -435,72 +664,51 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         self._ports_by_desc = {}
         self._port_polling_after_id = None
 
+        self._webrepl_frame = None
+        self._serial_frame = None
+
+        self.connection_page = self.create_and_add_empty_page(tr("Connection"))
+        self.options_page = self.create_and_add_empty_page(tr("Options"))
+        self.stubs_page = self.create_and_add_stubs_page(proxy_class=self.proxy_class)
+        self.advanced_page = self.create_and_add_empty_page(tr("Advanced"), weighty_column=5)
+
+        self._init_connection_page()
+        self._init_options_page()
+        self._init_advanced_page()
+
+        self.notebook.select(self.connection_page)
+
+    def _init_connection_page(self) -> None:
         intro_text = self._get_intro_text()
         if intro_text:
-            intro_label = ttk.Label(self, text=intro_text)
-            intro_label.grid(row=0, column=0, sticky="nw")
+            add_text_row(self.connection_page, intro_text)
 
         intro_url = self._get_intro_url()
         if intro_url:
-            intro_url_label = create_url_label(self, intro_url)
-            intro_url_label.grid(row=1, column=0, sticky="nw")
+            intro_url_label = create_url_label(self.connection_page, intro_url)
+            intro_url_label.grid(row=1, column=0, columnspan=2, sticky="nw")
 
         port_label = ttk.Label(
-            self, text=tr("Port or WebREPL") if self.allow_webrepl else tr("Port")
+            self.connection_page, text=tr("Port or WebREPL") if self.allow_webrepl else tr("Port")
         )
-        port_label.grid(row=3, column=0, sticky="nw", pady=(10, 0))
+        port_label.grid(row=3, column=0, columnspan=2, sticky="nw", pady=(10, 0))
 
         self._port_desc_variable = create_string_var("", self._on_change_port)
         self._port_combo = ttk.Combobox(
-            self,
+            self.connection_page,
             exportselection=False,
             textvariable=self._port_desc_variable,
             values=[],
         )
         self._port_combo.state(["!disabled", "readonly"])
 
-        self._port_combo.grid(row=4, column=0, sticky="new")
+        self._port_combo.grid(row=4, column=0, columnspan=2, sticky="new")
         self.columnconfigure(0, weight=1)
 
-        self._webrepl_frame = None
-        self._serial_frame = None
-
-        self.add_checkbox(
-            self.backend_name + ".interrupt_on_connect",
-            row=10,
-            description=tr("Interrupt working program on connect"),
-            pady=(ems_to_pixels(2.0), 0),
-        )
-
-        if self.may_have_rtc():
-            self.add_checkbox(
-                self.backend_name + ".sync_time",
-                row=11,
-                description=tr("Synchronize device's real time clock"),
-            )
-
-            self.add_checkbox(
-                self.backend_name + ".local_rtc",
-                row=12,
-                description=tr("Use local time in real time clock"),
-            )
-
-        self.add_checkbox(
-            self.backend_name + ".restart_interpreter_before_run",
-            row=13,
-            description=tr("Restart interpreter before running a script"),
-        )
-
-        self.add_checkbox(
-            self.backend_name + ".populate_argv",
-            row=14,
-            description=tr("Populate sys.argv on run"),
-        )
-
-        last_row = ttk.Frame(self)
-        last_row.grid(row=100, sticky="swe")
-        self.rowconfigure(100, weight=1)
-        last_row.columnconfigure(1, weight=1)
+        # following should go to the bottom
+        self.connection_page.rowconfigure(100, weight=1)
+        last_row = ttk.Frame(self.connection_page)
+        last_row.grid(row=100, columnspan=2, sticky="se")
 
         kinds = self.get_flashing_dialog_kinds()
         for i, kind in enumerate(kinds):
@@ -523,9 +731,193 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
                 link_text,
                 _click_flashing_link,
             )
-            python_link.grid(row=i, column=1, sticky="e")
+            python_link.grid(row=i, column=1, sticky="se")
 
         self._keep_refreshing_ports(first_time=True)
+
+    def _init_options_page(self) -> None:
+        add_option_checkbox(
+            self.options_page,
+            self.backend_name + ".interrupt_on_connect",
+            tr("Interrupt working program on connect"),
+        )
+
+        if self.may_have_rtc():
+            add_option_checkbox(
+                self.options_page,
+                self.backend_name + ".sync_time",
+                tr("Synchronize device's real time clock"),
+            )
+
+            add_option_checkbox(
+                self.options_page,
+                self.backend_name + ".local_rtc",
+                tr("Use local time in real time clock"),
+            )
+
+        add_option_checkbox(
+            self.options_page,
+            self.backend_name + ".restart_interpreter_before_run",
+            tr("Restart interpreter before running a script"),
+        )
+
+        add_option_checkbox(
+            self.options_page,
+            self.backend_name + ".populate_argv",
+            tr("Populate sys.argv on run"),
+        )
+
+    def _init_advanced_page(self) -> None:
+        add_text_row(
+            self.advanced_page,
+            "Your device, serial driver and OS may require specific DTR / RTS signals for proper connection",
+            columnspan=6,
+        )
+
+        # dtr and rts options are stored separately, but it's more useful to present
+        # and describe the combination
+        dtr_rts_combobox = add_option_combobox(
+            self.advanced_page,
+            None,
+            "DTR / RTS",
+            choices={
+                "True / True   (good for most boards, may reset ESP-s on Windows)": (
+                    True,
+                    True,
+                ),
+                "True / False   (best for some ESP-s)": (
+                    True,
+                    False,
+                ),
+                "False / True   (bad for most boards)": (False, True),
+                "False / False   (best for most ESP-s on Windows)": (False, False),
+            },
+            width=60,
+            combobox_columnspan=5,
+        )
+
+        dtr = get_workbench().get_option(self.backend_name + ".dtr")
+        if dtr is None:
+            dtr = True
+        rts = get_workbench().get_option(self.backend_name + ".rts")
+        if rts is None:
+            rts = True
+
+        dtr_rts_combobox.select_value((dtr, rts))
+
+        def set_dtr_rts_options(event):
+            dtr, rts = dtr_rts_combobox.get_selected_value()
+            get_workbench().set_option(self.backend_name + ".dtr", dtr)
+            get_workbench().set_option(self.backend_name + ".rts", rts)
+
+        dtr_rts_combobox.bind("<<ComboboxSelected>>", set_dtr_rts_options, True)
+
+        # Submit modes
+        def add_submit_mode_widgets(
+            option_name_qualifier: str,
+            raw_paste_comment: str,
+            paste_comment: str,
+            raw_comment: str,
+        ):
+            mode_combobox = add_option_combobox(
+                self.advanced_page,
+                f"{self.backend_name}.{option_name_qualifier}submit_mode",
+                "Submit mode",
+                choices={
+                    f"raw-paste   ({raw_paste_comment})": "raw_paste",
+                    f"paste   ({paste_comment})": "paste",
+                    f"raw   ({raw_comment})": "raw",
+                },
+                column=0,
+                width=30,
+            )
+
+            row = get_last_grid_row(self.advanced_page)
+
+            size_combobox = add_option_combobox(
+                self.advanced_page,
+                f"{self.backend_name}.{option_name_qualifier}write_block_size",
+                "block size",
+                choices={
+                    f"512": 512,
+                    f"256": 256,
+                    f"255": 255,
+                    f"128": 128,
+                    f"64": 64,
+                    f"32": 32,
+                    f"30": 30,
+                },
+                width=4,
+                label_padx=ems_to_pixels(0.5),
+                row=row,
+                column=2,
+            )
+            size_label = self.advanced_page.grid_slaves(row=row, column=2)[0]
+
+            delay_combobox = add_option_combobox(
+                self.advanced_page,
+                f"{self.backend_name}.{option_name_qualifier}write_block_delay",
+                "block delay",
+                choices={
+                    f"0.01": 0.01,
+                    f"0.02": 0.02,
+                    f"0.05": 0.05,
+                    f"0.1": 0.1,
+                    f"0.2": 0.2,
+                    f"0.5": 0.5,
+                },
+                width=4,
+                label_padx=ems_to_pixels(0.5),
+                row=row,
+                column=4,
+            )
+            delay_label = self.advanced_page.grid_slaves(row=row, column=4)[0]
+
+            def update_visible_fields(event=None):
+                if mode_combobox.get_selected_value() == "raw":
+                    delay_combobox.grid()
+                    delay_label.grid()
+                else:
+                    delay_combobox.grid_remove()
+                    delay_label.grid_remove()
+
+                if mode_combobox.get_selected_value() in ["paste", "raw"]:
+                    size_combobox.grid()
+                    size_label.grid()
+                else:
+                    size_combobox.grid_remove()
+                    size_label.grid_remove()
+
+            mode_combobox.bind("<<ComboboxSelected>>", update_visible_fields, True)
+            update_visible_fields()
+
+        add_vertical_separator(self.advanced_page)
+
+        add_text_row(
+            self.advanced_page,
+            f"In case of serial communication errors, try different modes of sending commands to {self.get_firmware_name()} REPL",
+            columnspan=6,
+        )
+
+        add_submit_mode_widgets(
+            "", raw_paste_comment="fastest", paste_comment="next to try", raw_comment="slowest"
+        )
+
+        if self.allow_webrepl:
+            add_vertical_separator(self.advanced_page)
+
+            add_text_row(
+                self.advanced_page,
+                f"WebREPL connection may require different submit mode",
+                columnspan=6,
+            )
+
+            add_submit_mode_widgets(
+                "webrepl_",
+                raw_paste_comment="probably doesn't work",
+                paste_comment="try with blocks of 255 bytes",
+                raw_comment="may require long delays",
+            )
 
     def _keep_refreshing_ports(self, first_time=False):
         ports_by_desc_before = self._ports_by_desc.copy()
@@ -586,7 +978,7 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
             self._on_change_port()
 
     def _get_flasher_link_title(self) -> str:
-        return tr("Install or update %s") % "MicroPython"
+        return tr("Install or update %s") % self.get_firmware_name()
 
     def _handle_python_installer_link(self, kind: str):
         new_port = self._open_flashing_dialog(kind)
@@ -610,7 +1002,9 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         if self._serial_frame is not None:
             return self._serial_frame
 
-        self._serial_frame = TreeFrame(self, columns=("attribute", "value"), height=5)
+        self._serial_frame = TreeFrame(
+            self.connection_page, columns=("attribute", "value"), height=5, show_scrollbar=False
+        )
         tree = self._serial_frame.tree
 
         tree.column("attribute", width=ems_to_pixels(10), anchor="w", stretch=False)
@@ -653,7 +1047,7 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
         if self._webrepl_frame is not None:
             return self._webrepl_frame
 
-        self._webrepl_frame = ttk.Frame(self)
+        self._webrepl_frame = ttk.Frame(self.connection_page)
 
         instructions = (
             "If your device supports WebREPL, first connect via serial, make sure WebREPL is enabled\n"
@@ -700,7 +1094,7 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
             return None
         return self._ports_by_desc[port_desc]
 
-    def is_modified(self):
+    def _connection_is_modified(self):
         return (
             self._port_desc_variable.modified
             or self.webrepl_selected()
@@ -712,11 +1106,11 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
     def webrepl_selected(self):
         return self.get_selected_port_name() == WEBREPL_PORT_VALUE
 
-    def should_restart(self):
-        return self.is_modified() or self._has_opened_python_flasher
+    def should_restart(self, changed_options: List[str]):
+        return self._connection_is_modified() or self._has_opened_python_flasher
 
-    def apply(self):
-        if not self.is_modified():
+    def apply(self, changed_options: List[str]):
+        if not self._connection_is_modified():
             return
 
         else:
@@ -745,11 +1139,13 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
 
     def _on_change_port(self, *args):
         if self._port_desc_variable.get() == WEBREPL_OPTION_DESC:
-            self._get_webrepl_frame().grid(row=6, column=0, sticky="nwe")
+            self._get_webrepl_frame().grid(row=6, column=0, columnspan=2, sticky="nwe")
             if self._serial_frame and self._serial_frame.winfo_ismapped():
                 self._serial_frame.grid_forget()
         else:
-            self._get_serial_frame().grid(row=6, column=0, sticky="nwe", pady=(ems_to_pixels(1), 0))
+            self._get_serial_frame().grid(
+                row=6, column=0, columnspan=2, sticky="nwe", pady=(ems_to_pixels(1), 0)
+            )
             self._update_serial_frame()
             if self._webrepl_frame and self._webrepl_frame.winfo_ismapped():
                 self._webrepl_frame.grid_forget()
@@ -765,6 +1161,9 @@ class BareMetalMicroPythonConfigPage(BackendDetailsConfigPage):
 
     def _open_flashing_dialog(self, kind: str) -> Optional[str]:
         raise NotImplementedError()
+
+    def get_firmware_name(self) -> str:
+        return "MicroPython"
 
     @property
     def allow_webrepl(self):
@@ -900,26 +1299,22 @@ class LocalMicroPythonProxy(MicroPythonProxy):
         executable = conf[f"{cls.backend_name}.executable"]
         return os.path.exists(executable) or shutil.which(executable)
 
+    def can_install_packages_from_files(self) -> bool:
+        return True
 
-class LocalMicroPythonConfigPage(BackendDetailsConfigPage):
-    backend_name = None  # Will be overwritten on Workbench.add_backend
+
+class LocalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
 
     def __init__(self, master):
         super().__init__(master)
+        self.executable_page = self.create_and_add_empty_page(tr("Executable"))
 
-        self._changed = False
-        self._executable_var = self._add_text_field(
-            "Interpreter", "LocalMicroPython.executable", 30
+        add_option_entry(
+            self.executable_page, "LocalMicroPython.executable", tr("Interpreter"), width=30
         )
 
-    def _on_change(self):
-        self._changed = True
-
-    def apply(self):
-        get_workbench().set_option("LocalMicroPython.executable", self._executable_var.get())
-
-    def should_restart(self):
-        return self._changed
+    def should_restart(self, changed_options: List[str]):
+        return "LocalMicroPython.executable" in changed_options
 
 
 class SshMicroPythonProxy(MicroPythonProxy):
@@ -1060,6 +1455,9 @@ class SshMicroPythonProxy(MicroPythonProxy):
     def is_valid_configuration(cls, conf: Dict[str, Any]) -> bool:
         return True
 
+    def can_install_packages_from_files(self) -> bool:
+        return False
+
 
 class SshMicroPythonConfigPage(BaseSshProxyConfigPage):
     pass
@@ -1109,13 +1507,16 @@ def _list_serial_ports_uncached(skip_logging: bool = False):
 
         irrelevant = ["/dev/cu.Bluetooth-Incoming-Port", "/dev/cu.iPhone-WirelessiAP"]
         result = []
-        for p in comports():
+        unfiltered_result = comports()
+        for p in unfiltered_result:
             if p.device not in irrelevant:
                 result.append(p)
 
         return result
     finally:
         os.path.islink = old_islink
+        if not skip_logging:
+            logger.info("Done listing serial ports")
 
 
 def port_exists(device):
@@ -1164,11 +1565,14 @@ def add_micropython_backend(
     validate_time=False,
     sync_time=None,
     local_rtc=True,
-    submit_mode=None,
-    write_block_size=None,
-    write_block_delay=None,
-    dtr=None,
-    rts=None,
+    submit_mode="raw_paste",
+    write_block_size=256,
+    write_block_delay=0.01,
+    webrepl_submit_mode="paste",
+    webrepl_write_block_size=255,
+    webrepl_write_block_delay=0.5,
+    dtr=True,
+    rts=True,
 ):
     if bare_metal:
         get_workbench().set_default(name + ".port", "auto")
@@ -1177,6 +1581,9 @@ def add_micropython_backend(
         get_workbench().set_default(name + ".submit_mode", submit_mode)
         get_workbench().set_default(name + ".write_block_size", write_block_size)
         get_workbench().set_default(name + ".write_block_delay", write_block_delay)
+        get_workbench().set_default(name + ".webrepl_submit_mode", webrepl_submit_mode)
+        get_workbench().set_default(name + ".webrepl_write_block_size", webrepl_write_block_size)
+        get_workbench().set_default(name + ".webrepl_write_block_delay", webrepl_write_block_delay)
         get_workbench().set_default(name + ".dtr", dtr)
         get_workbench().set_default(name + ".rts", rts)
         get_workbench().set_default(name + ".interrupt_on_connect", True)

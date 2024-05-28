@@ -7,7 +7,7 @@ import tkinter as tk
 import traceback
 from logging import getLogger
 from tkinter import messagebox, ttk
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import thonny
 from thonny import get_runner, get_shell, get_workbench, running, ui_utils
@@ -21,8 +21,11 @@ from thonny.common import (
     running_in_virtual_environment,
 )
 from thonny.languages import tr
-from thonny.misc_utils import running_on_mac_os, running_on_windows
-from thonny.plugins.backend_config_page import BackendDetailsConfigPage
+from thonny.misc_utils import inside_flatpak, running_on_mac_os, running_on_windows
+from thonny.plugins.backend_config_page import (
+    BackendDetailsConfigPage,
+    TabbedBackendDetailsConfigurationPage,
+)
 from thonny.running import WINDOWS_EXE, SubprocessProxy, get_front_interpreter_for_subprocess
 from thonny.terminal import run_in_terminal
 from thonny.ui_utils import askdirectory, askopenfilename, create_string_var
@@ -149,11 +152,6 @@ class LocalCPythonProxy(SubprocessProxy):
 
         run_in_terminal(cmd, os.path.dirname(script_path), keep_open=keep_open)
 
-    def get_pip_gui_class(self):
-        from thonny.plugins.cpython_frontend.cp_pip_gui import LocalCPythonPipDialog
-
-        return LocalCPythonPipDialog
-
     def can_run_remote_files(self):
         return False
 
@@ -223,20 +221,51 @@ class LocalCPythonProxy(SubprocessProxy):
     def is_valid_configuration(cls, conf: Dict[str, Any]) -> bool:
         return os.path.exists(conf[f"{cls.backend_name}.executable"])
 
+    def can_install_packages_from_files(self) -> bool:
+        return True
 
-class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
+    def _prefer_user_install(self):
+        return not (
+            self._in_venv
+            or thonny.is_portable()
+            and is_private_python(self.get_target_executable())
+        )
+
+    def get_packages_target_dir_with_comment(self):
+        if self.is_externally_managed():
+            return None, tr(
+                "The packages of this interpreter can be managed via your system package manager."
+            ) + "\n" + tr("For pip-installing a package, you need to use a virtual environment.")
+
+        if self._prefer_user_install():
+            usp = self.get_user_site_packages()
+            os.makedirs(usp, exist_ok=True)
+            return normpath_with_actual_case(usp), "user site-packages"
+        else:
+            sp = self.get_site_packages()
+            if sp is None:
+                return None, "could not find target directory"
+            return normpath_with_actual_case(sp), "site-packages"
+
+    def normalize_target_path(self, path: str) -> str:
+        return normpath_with_actual_case(path)
+
+
+class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
     def __init__(self, master):
         super().__init__(master)
+
+        self.executable_page = self.create_and_add_empty_page(tr("Executable"))
 
         self._configuration_variable = create_string_var(
             get_workbench().get_option("LocalCPython.executable")
         )
 
-        entry_label = ttk.Label(self, text=tr("Python executable"))
+        entry_label = ttk.Label(self.executable_page, text=tr("Python executable"))
         entry_label.grid(row=0, column=1, columnspan=2, sticky=tk.W)
 
         self._entry = ttk.Combobox(
-            self,
+            self.executable_page,
             exportselection=False,
             textvariable=self._configuration_variable,
             values=_get_interpreters(),
@@ -246,13 +275,13 @@ class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
         self._entry.grid(row=1, column=1, sticky=tk.NSEW)
 
         self._select_button = ttk.Button(
-            self,
+            self.executable_page,
             text="...",
             width=3,
             command=self._select_executable,
         )
         self._select_button.grid(row=1, column=2, sticky="e", padx=(10, 0))
-        self.columnconfigure(1, weight=1)
+        self.executable_page.columnconfigure(1, weight=1)
 
         extra_text = tr("NB! Thonny only supports Python %s and later") % "3.8"
         if running_on_mac_os():
@@ -261,7 +290,7 @@ class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
                 + "from a virtual environment. In this case choose the 'activate' script instead\n"
                 + "of the interpreter (or enter the path directly to the box)!"
             )
-        extra_label = ttk.Label(self, text=extra_text)
+        extra_label = ttk.Label(self.executable_page, text=extra_text)
         extra_label.grid(row=2, column=1, columnspan=2, pady=10, sticky="w")
 
         venv_text = tr(
@@ -272,12 +301,12 @@ class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
         )
         venv_text = "\n".join(textwrap.wrap(venv_text, 80))
 
-        venv_label = ttk.Label(self, text=venv_text)
+        venv_label = ttk.Label(self.executable_page, text=venv_text)
         venv_label.grid(row=3, column=1, columnspan=2, pady=10, sticky="w")
 
-        last_row = ttk.Frame(self)
+        last_row = ttk.Frame(self.executable_page)
         last_row.grid(row=100, sticky="swe", column=1, columnspan=2)
-        self.rowconfigure(100, weight=1)
+        self.executable_page.rowconfigure(100, weight=1)
         last_row.columnconfigure(1, weight=1)
         new_venv_link = ui_utils.create_action_label(
             last_row,
@@ -338,8 +367,13 @@ class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
         assert os.path.isdir(path)
         path = normpath_with_actual_case(path)
 
+        args = [running.get_front_interpreter_for_subprocess(), "-m", "venv"]
+        if inside_flatpak():
+            args.append("--without-pip")
+        args.append(path)
+
         proc = subprocess.Popen(
-            [running.get_front_interpreter_for_subprocess(), "-m", "venv", path],
+            args,
             stdin=None,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -358,16 +392,23 @@ class LocalCPythonConfigurationPage(BackendDetailsConfigPage):
         if os.path.exists(exe_path):
             self._configuration_variable.set(exe_path)
 
-    def should_restart(self):
+            if inside_flatpak():
+                proc = subprocess.Popen(
+                    [exe_path, "-m", "ensurepip", "--default-pip", "--upgrade"],
+                    stdin=None,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    universal_newlines=True,
+                )
+                from thonny.workdlg import SubprocessDialog
+
+                dlg = SubprocessDialog(
+                    self, proc, tr("Initializing virtual environment"), autostart=True
+                )
+                ui_utils.show_dialog(dlg)
+
+    def should_restart(self, changed_options: List[str]):
         return self._configuration_variable.modified
-
-    def apply(self):
-        if not self.should_restart():
-            return
-
-        path = self._configuration_variable.get()
-        if os.path.isfile(path):
-            get_workbench().set_option("LocalCPython.executable", path)
 
 
 def _get_interpreters():

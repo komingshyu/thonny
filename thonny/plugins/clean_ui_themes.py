@@ -49,7 +49,7 @@ def clean(
             }
         },
         "ButtonNotebook.TNotebook": {"configure": {"bordercolor": frame_background}},
-        "AutomaticNotebook.TNotebook": {"configure": {"bordercolor": frame_background}},
+        "ViewNotebook.TNotebook": {"configure": {"bordercolor": frame_background}},
         "TNotebook.Tab": {
             "configure": {"background": frame_background, "bordercolor": normal_detail},
             "map": {
@@ -71,6 +71,7 @@ def clean(
             "configure": {
                 "background": frame_background,
                 "activebackground": normal_detail,
+                "hoverbackground": normal_detail,
                 "indicatorbackground": normal_detail,
             }
         },
@@ -290,7 +291,7 @@ def clean(
                 "disabledforeground": low_foreground,
                 "highlightbackground": normal_detail,
                 "highlightcolor": high_detail,
-                "highlightthickness": 1,
+                "highlightthickness": 0,
             }
         },
         "Menubar": {
@@ -324,7 +325,7 @@ def clean(
 
 
 def load_plugin() -> None:
-    dark_images = {"tab-close-active": "tab-close-active-clam-dark"}
+    dark_images = {"tab-close-active": "tab-close-active-dark"}
 
     get_workbench().add_ui_theme(
         "Clean Dark",

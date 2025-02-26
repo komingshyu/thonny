@@ -76,7 +76,7 @@ class EditorConfigurationPage(ConfigurationPage):
             self,
             "view.recommended_line_length",
             tr("Line length guide (use 0 to turn off)"),
-            choices=[0, 60, 70, 80, 88, 90, 100, 110, 120],
+            choices=[0, 60, 70, 72, 79, 80, 88, 90, 100, 110, 120],
             width=4,
         )
 
@@ -102,11 +102,13 @@ class EditorConfigurationPage(ConfigurationPage):
 
         self.columnconfigure(1, weight=1)
 
-    def apply(self, changed_options: List[str]):
+    def apply(self, changed_options: List[str]) -> bool:
         get_workbench().get_editor_notebook().update_appearance()
         shell = get_shell(create=False)
         if shell is not None:
             shell.update_appearance()
+
+        return True
 
 
 def load_plugin() -> None:

@@ -12,6 +12,7 @@ from typing import Dict, Union  # @UnusedImport
 
 from thonny import get_workbench, roughparse, tktextext, ui_utils
 from thonny.common import TextRange
+from thonny.languages import tr
 from thonny.tktextext import EnhancedText
 from thonny.ui_utils import EnhancedTextWithLogging, ask_string, compute_tab_stops
 
@@ -185,8 +186,11 @@ class CodeView(tktextext.EnhancedTextFrame):
         self._gutter.tag_configure("active", font="BoldEditorFont")
         self._gutter.tag_raise("spacer")
 
-    def get_content(self):
-        return self.text.get("1.0", "end-1c")  # -1c because Text always adds a newline itself
+    def get_content(self, up_to_end=False):
+        if not up_to_end:
+            return self.text.get("1.0", "end-1c")  # -1c because Text always adds a newline itself
+        else:
+            return self.text.get("1.0", "end")
 
     def detect_encoding(self, data):
         enc = self.detect_encoding_without_check(data)
@@ -247,8 +251,8 @@ class CodeView(tktextext.EnhancedTextFrame):
                 pass
 
             encoding = ask_string(
-                "Bad encoding",
-                "Could not read as %s text.\nYou could try another encoding" % encoding,
+                tr("Bad encoding"),
+                tr("Could not read as %s text.\nYou could try another encoding") % encoding,
                 initial_value=encoding,
                 options=get_proposed_encodings(),
                 master=self.winfo_toplevel(),

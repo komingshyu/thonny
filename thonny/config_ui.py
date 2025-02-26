@@ -1,3 +1,4 @@
+import re
 import sys
 import tkinter as tk
 import warnings
@@ -13,6 +14,8 @@ from thonny.ui_utils import CommonDialog, MappingCombobox, create_url_label, ems
 logger = getLogger(__name__)
 
 LABEL_PADDING_EMS = 1
+
+_regex_validators: Dict[str, Any] = {}
 
 
 class ConfigurationDialog(CommonDialog):
@@ -100,24 +103,26 @@ class ConfigurationDialog(CommonDialog):
 
     def _ok(self, event=None):
         changed_options = self.get_changed_options()
-        for _, title, page in self._page_records:
-            try:
-                logger.info("Applying changed options: %r", changed_options)
+        logger.info("Config OK button press with changed options %r", changed_options)
+        if changed_options:
+            for _, title, page in self._page_records:
+                try:
+                    logger.info("Applying changed options for %r", title)
 
-                # Before 5.0, method apply did not have changed_options parameter
-                from inspect import signature
+                    # Before 5.0, method apply did not have changed_options parameter
+                    from inspect import signature
 
-                if len(signature(page.apply).parameters) > 0:
-                    result = page.apply(changed_options)
-                else:
-                    result = page.apply()
+                    if len(signature(page.apply).parameters) > 0:
+                        result = page.apply(changed_options)
+                    else:
+                        result = page.apply()
 
-                # note that it matters whether the result *is* False, or is convertible to False
-                if result is False:
-                    logger.info("%s refused apply", title)
-                    return
-            except Exception:
-                get_workbench().report_exception("Error when applying options in " + title)
+                    # note that it matters whether the result *is* False, or is convertible to False
+                    if result is False:
+                        logger.info("%s refused apply", title)
+                        return
+                except Exception:
+                    get_workbench().report_exception("Error when applying options in " + title)
 
         self.destroy()
 
@@ -196,10 +201,10 @@ class ConfigurationPage(ttk.Frame):
         entry = ttk.Entry(self, textvariable=variable, **kw)
         entry.grid(row=row, column=column, sticky=tk.W, pady=pady, columnspan=columnspan, padx=padx)
 
-    def apply(self, changed_options: List[str]):
+    def apply(self, changed_options: List[str]) -> bool:
         """Apply method should return False, when page contains invalid
         input and configuration dialog should not be closed."""
-        pass
+        return True
 
     def cancel(self):
         """Called when dialog gets cancelled"""
@@ -223,7 +228,7 @@ def _check_bundle_with_tooltip_icon(widget: tk.Widget, tooltip: Optional[str]) -
 
 def _ensure_pady(pady: Union[int, str, Tuple, None]) -> Union[int, str, Tuple]:
     if pady is None:
-        return (0, ems_to_pixels(0.1))
+        return (0, ems_to_pixels(0.25))
     else:
         return pady
 
@@ -321,9 +326,6 @@ def add_option_combobox(
         padx=combobox_padx,
     )
 
-    combobox.select_clear()
-    combobox.bind("<<ComboboxSelected>>", lambda _: combobox.select_clear(), True)
-
     return combobox
 
 
@@ -340,6 +342,7 @@ def add_option_entry(
     entry_columnspan: int = 1,
     entry_pady: Union[Tuple, int, str, None] = None,
     entry_padx: Union[Tuple, int, str] = 0,
+    regex: Optional[str] = None,
     tooltip: Optional[str] = None,
 ) -> ttk.Entry:
     if row is None:
@@ -357,11 +360,13 @@ def add_option_entry(
     )
 
     variable = get_workbench().get_variable(option_name)
-    entry = ttk.Entry(
-        master,
-        textvariable=variable,
-        width=width,
+
+    validation_args = (
+        {}
+        if regex is None
+        else {"validate": "all", "validatecommand": (get_regex_validator(regex), "%P")}
     )
+    entry = ttk.Entry(master, textvariable=variable, width=width, **validation_args)
     widget = _check_bundle_with_tooltip_icon(entry, tooltip)
     widget.grid(
         row=row,
@@ -551,3 +556,14 @@ def add_vertical_separator(
     frame.grid(row=row, column=column)
 
     return frame
+
+
+def get_regex_validator(regex: str) -> Any:
+    if regex not in _regex_validators:
+
+        def validate(s: str) -> bool:
+            return bool(re.fullmatch(regex, s))
+
+        _regex_validators[regex] = get_workbench().register(validate)
+
+    return _regex_validators[regex]

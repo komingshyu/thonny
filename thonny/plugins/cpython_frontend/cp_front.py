@@ -1,34 +1,34 @@
 import glob
 import os.path
-import subprocess
 import sys
 import textwrap
 import tkinter as tk
-import traceback
 from logging import getLogger
-from tkinter import messagebox, ttk
-from typing import Any, Dict, List
+from tkinter import ttk
+from typing import Any, Dict, List, Optional, Tuple
 
 import thonny
-from thonny import get_runner, get_shell, get_workbench, running, ui_utils
+from thonny import get_runner, get_shell, get_workbench, ui_utils
+from thonny.base_file_browser import (
+    FILE_DIALOG_HEIGHT_EMS_OPTION,
+    FILE_DIALOG_WIDTH_EMS_OPTION,
+    LocalFileDialog,
+)
 from thonny.common import (
     InlineCommand,
     InlineResponse,
     ToplevelCommand,
-    get_base_executable,
     is_private_python,
     normpath_with_actual_case,
     running_in_virtual_environment,
+    try_get_base_executable,
 )
 from thonny.languages import tr
-from thonny.misc_utils import inside_flatpak, running_on_mac_os, running_on_windows
-from thonny.plugins.backend_config_page import (
-    BackendDetailsConfigPage,
-    TabbedBackendDetailsConfigurationPage,
-)
-from thonny.running import WINDOWS_EXE, SubprocessProxy, get_front_interpreter_for_subprocess
+from thonny.misc_utils import running_on_mac_os, running_on_windows
+from thonny.plugins.backend_config_page import TabbedBackendDetailsConfigurationPage
+from thonny.running import WINDOWS_EXE, SubprocessProxy
 from thonny.terminal import run_in_terminal
-from thonny.ui_utils import askdirectory, askopenfilename, create_string_var
+from thonny.ui_utils import askopenfilename, create_string_var, ems_to_pixels
 
 logger = getLogger(__name__)
 
@@ -36,13 +36,19 @@ logger = getLogger(__name__)
 class LocalCPythonProxy(SubprocessProxy):
     def __init__(self, clean: bool) -> None:
         logger.info("Creating LocalCPythonProxy")
-        executable = get_workbench().get_option("LocalCPython.executable")
         self._expecting_response_for_gui_update = False
-        super().__init__(clean, executable)
+        super().__init__(clean)
         try:
             self._send_msg(ToplevelCommand("get_environment_info"))
         except Exception:
             get_shell().report_exception()
+
+    def compute_mgmt_executable(self):
+        return get_workbench().get_option("LocalCPython.executable")
+
+    def get_mgmt_executable_validation_error(self) -> Optional[str]:
+        if not os.path.isfile(self._mgmt_executable):
+            return f"Interpreter {self._mgmt_executable!r} not found.\nPlease select another!"
 
     def _get_initial_cwd(self):
         return get_workbench().get_local_cwd()
@@ -89,6 +95,12 @@ class LocalCPythonProxy(SubprocessProxy):
 
     def get_target_executable(self):
         return self._mgmt_executable
+
+    def get_executable(self):
+        return self._reported_executable
+
+    def get_base_executable(self) -> Optional[str]:
+        return self._reported_base_executable
 
     def _update_gui_updating(self, msg):
         """Enables running Tkinter or Qt programs which doesn't call mainloop.
@@ -144,7 +156,7 @@ class LocalCPythonProxy(SubprocessProxy):
                 self._proc.send_signal(signal.SIGINT)
 
     def run_script_in_terminal(self, script_path, args, interactive, keep_open):
-        cmd = [self._mgmt_executable]
+        cmd = [self._mgmt_executable] + self.get_mgmt_executable_special_switches()
         if interactive:
             cmd.append("-i")
         cmd.append(os.path.basename(script_path))
@@ -173,6 +185,9 @@ class LocalCPythonProxy(SubprocessProxy):
     def has_local_interpreter(self):
         return True
 
+    def interpreter_is_cpython_compatible(self) -> bool:
+        return True
+
     def can_debug(self) -> bool:
         return True
 
@@ -199,7 +214,7 @@ class LocalCPythonProxy(SubprocessProxy):
         return cls.backend_description + "  •  " + exe_label
 
     @classmethod
-    def get_switcher_entries(cls):
+    def get_switcher_entries(cls) -> List[Tuple[Dict[str, Any], str, str]]:
         confs = sorted(
             cls.get_last_configurations(), key=lambda conf: conf[f"{cls.backend_name}.executable"]
         )
@@ -209,7 +224,7 @@ class LocalCPythonProxy(SubprocessProxy):
             confs.insert(0, default_conf)
 
         return [
-            (conf, cls.get_switcher_configuration_label(conf))
+            (conf, cls.get_switcher_configuration_label(conf), "localhost")
             for conf in confs
             if os.path.exists(conf[f"{cls.backend_name}.executable"])
         ]
@@ -233,9 +248,7 @@ class LocalCPythonProxy(SubprocessProxy):
 
     def get_packages_target_dir_with_comment(self):
         if self.is_externally_managed():
-            return None, tr(
-                "The packages of this interpreter can be managed via your system package manager."
-            ) + "\n" + tr("For pip-installing a package, you need to use a virtual environment.")
+            return None, self.get_externally_managed_message()
 
         if self._prefer_user_install():
             usp = self.get_user_site_packages()
@@ -257,22 +270,20 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
 
         self.executable_page = self.create_and_add_empty_page(tr("Executable"))
 
-        self._configuration_variable = create_string_var(
-            get_workbench().get_option("LocalCPython.executable")
-        )
+        self._exe_variable = get_workbench().get_variable("LocalCPython.executable")
 
         entry_label = ttk.Label(self.executable_page, text=tr("Python executable"))
         entry_label.grid(row=0, column=1, columnspan=2, sticky=tk.W)
 
-        self._entry = ttk.Combobox(
+        self._exe_combo = ttk.Combobox(
             self.executable_page,
             exportselection=False,
-            textvariable=self._configuration_variable,
-            values=_get_interpreters(),
+            textvariable=self._exe_variable,
+            values=find_local_cpython_executables(),
         )
-        self._entry.state(["!disabled", "readonly"])
+        self._exe_combo.state(["!disabled", "readonly"])
 
-        self._entry.grid(row=1, column=1, sticky=tk.NSEW)
+        self._exe_combo.grid(row=1, column=1, sticky=tk.NSEW)
 
         self._select_button = ttk.Button(
             self.executable_page,
@@ -283,26 +294,18 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
         self._select_button.grid(row=1, column=2, sticky="e", padx=(10, 0))
         self.executable_page.columnconfigure(1, weight=1)
 
-        extra_text = tr("NB! Thonny only supports Python %s and later") % "3.8"
-        if running_on_mac_os():
-            extra_text += "\n\n" + tr(
-                "NB! File selection button may not work properly when selecting executables\n"
-                + "from a virtual environment. In this case choose the 'activate' script instead\n"
-                + "of the interpreter (or enter the path directly to the box)!"
-            )
+        extra_text = tr("NB! Thonny only supports Python %s and later") % "3.9"
         extra_label = ttk.Label(self.executable_page, text=extra_text)
         extra_label.grid(row=2, column=1, columnspan=2, pady=10, sticky="w")
 
-        venv_text = tr(
-            "You can activate an existing virtual environment also"
-            + " via the right-click context menu in the file navagation"
-            + " when selecting a virtual environment folder,"
-            + " or the 'pyveng.cfg' file inside."
+        file_browser_hint = ttk.Label(
+            self.executable_page,
+            text=tr(
+                "Note that you can select an existing virtual environment also via "
+                "right-click menu in Thonny's file browser."
+            ),
         )
-        venv_text = "\n".join(textwrap.wrap(venv_text, 80))
-
-        venv_label = ttk.Label(self.executable_page, text=venv_text)
-        venv_label.grid(row=3, column=1, columnspan=2, pady=10, sticky="w")
+        file_browser_hint.grid(row=3, column=1, columnspan=2, pady=10, sticky="w")
 
         last_row = ttk.Frame(self.executable_page)
         last_row.grid(row=100, sticky="swe", column=1, columnspan=2)
@@ -310,7 +313,7 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
         last_row.columnconfigure(1, weight=1)
         new_venv_link = ui_utils.create_action_label(
             last_row,
-            "New virtual environment",
+            tr("New virtual environment"),
             self._create_venv,
         )
         new_venv_link.grid(row=0, column=1, sticky="e", pady=10)
@@ -318,6 +321,7 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
         # self.columnconfigure(1, weight=1)
 
     def _select_executable(self):
+        initialdir = get_workbench().get_local_cwd()
         # TODO: get dir of current interpreter
         options = {"parent": self.winfo_toplevel()}
         if running_on_windows():
@@ -326,7 +330,18 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
                 (tr("all files"), ".*"),
             ]
 
-        filename = askopenfilename(**options)
+        if running_on_mac_os():
+            dlg = MacOsInterpreterDialog(self, "open", initialdir)
+            ui_utils.show_dialog(
+                dlg,
+                self,
+                width=ems_to_pixels(get_workbench().get_option(FILE_DIALOG_WIDTH_EMS_OPTION)),
+                height=ems_to_pixels(get_workbench().get_option(FILE_DIALOG_HEIGHT_EMS_OPTION)),
+            )
+            filename = dlg.result
+        else:
+            filename = askopenfilename(**options)
+
         if not filename:
             return
 
@@ -334,102 +349,113 @@ class LocalCPythonConfigurationPage(TabbedBackendDetailsConfigurationPage):
             filename = filename[: -len("activate")] + "python3"
 
         if filename:
-            self._configuration_variable.set(filename)
+            self._exe_variable.set(filename)
 
     def _create_venv(self, event=None):
-        if not _check_venv_installed(self):
-            return
+        from thonny.venv_dialog import create_new_virtual_environment
 
-        messagebox.showinfo(
-            "Creating new virtual environment",
-            "After clicking 'OK' you need to choose an empty directory, "
-            "which will be the root of your new virtual environment.",
-            parent=self,
-        )
-        path = None
-        while True:
-            path = askdirectory(
-                parent=self.winfo_toplevel(),
-                initialdir=path,
-                title=tr("Select empty directory for new virtual environment"),
-            )
-            if not path:
-                return
-
-            if os.listdir(path):
-                messagebox.showerror(
-                    tr("Bad directory"),
-                    tr("Selected directory is not empty.\nSelect another or cancel."),
-                    master=self,
-                )
-            else:
-                break
-        assert os.path.isdir(path)
-        path = normpath_with_actual_case(path)
-
-        args = [running.get_front_interpreter_for_subprocess(), "-m", "venv"]
-        if inside_flatpak():
-            args.append("--without-pip")
-        args.append(path)
-
-        proc = subprocess.Popen(
-            args,
-            stdin=None,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-        )
-        from thonny.workdlg import SubprocessDialog
-
-        dlg = SubprocessDialog(self, proc, tr("Creating virtual environment"), autostart=True)
-        ui_utils.show_dialog(dlg)
-
-        if running_on_windows():
-            exe_path = normpath_with_actual_case(os.path.join(path, "Scripts", "python.exe"))
-        else:
-            exe_path = os.path.join(path, "bin", "python3")
-
-        if os.path.exists(exe_path):
-            self._configuration_variable.set(exe_path)
-
-            if inside_flatpak():
-                proc = subprocess.Popen(
-                    [exe_path, "-m", "ensurepip", "--default-pip", "--upgrade"],
-                    stdin=None,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    universal_newlines=True,
-                )
-                from thonny.workdlg import SubprocessDialog
-
-                dlg = SubprocessDialog(
-                    self, proc, tr("Initializing virtual environment"), autostart=True
-                )
-                ui_utils.show_dialog(dlg)
+        created_exe = create_new_virtual_environment(self)
+        logger.info("created_exe=%r", created_exe)
+        if created_exe is not None:
+            self._exe_combo.configure(values=[created_exe] + find_local_cpython_executables())
+            self._exe_variable.set(created_exe)
 
     def should_restart(self, changed_options: List[str]):
-        return self._configuration_variable.modified
+        return "LocalCPython.executable" in changed_options
+
+    def get_new_machine_id(self) -> str:
+        return "localhost"
 
 
-def _get_interpreters():
+def get_default_cpython_executable_for_backend() -> str:
+    if is_private_python(sys.executable) and running_in_virtual_environment():
+        # Private venv. Make an exception and use base Python for default backend.
+        default_path = try_get_base_executable(sys.executable)
+        if default_path is None:
+            logger.warning("Could not find base executable of %s", sys.executable)
+            default_path = sys.executable
+    else:
+        default_path = sys.executable.replace("pythonw.exe", "python.exe")
+
+    # In macOS bundle the path may have ..-s
+    default_path = os.path.normpath(default_path)
+
+    """ # Too confusing:
+    if running_on_mac_os():
+        # try to generalize so that the path can survive Python upgrade
+        ver = "{}.{}".format(*sys.version_info)
+        ver_fragment = f"/Versions/{ver}/bin/"
+        if ver_fragment in default_path:
+            generalized = default_path.replace(ver_fragment, "/Versions/Current/bin/")
+            if os.path.exists(generalized):
+                return generalized
+    """
+    return default_path
+
+
+def _get_interpreters_from_windows_registry():
+    # https://github.com/python/cpython/blob/master/Tools/msi/README.txt
+    # https://www.python.org/dev/peps/pep-0514/#installpath
+    import winreg
+
+    result = set()
+    for key in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+        for version in thonny.SUPPORTED_VERSIONS:
+            for suffix in ["", "-32", "-64"]:
+                variant = version + suffix
+                for subkey in [
+                    "SOFTWARE\\Python\\PythonCore\\" + variant + "\\InstallPath",
+                    "SOFTWARE\\Python\\PythonCore\\Wow6432Node\\" + variant + "\\InstallPath",
+                ]:
+                    try:
+                        dir_ = winreg.QueryValue(key, subkey)
+                        if dir_:
+                            path = os.path.join(dir_, WINDOWS_EXE)
+                            if os.path.exists(path):
+                                result.add(path)
+                    except Exception:
+                        pass
+
+    return result
+
+
+class MacOsInterpreterDialog(LocalFileDialog):
+    def get_title(self):
+        return tr("Select Python executable")
+
+    def get_favorites(self) -> List[str]:
+        result = super().get_favorites()
+        for extra in [
+            "/Library/Frameworks/Python.framework/Versions",
+            "/usr/bin",
+            "/opt/homebrew/bin",
+        ]:
+            if os.path.isdir(extra) and extra not in result:
+                result.append(extra)
+
+        return result
+
+
+def find_local_cpython_executables():
     result = set()
 
     if running_on_windows():
         # registry
         result.update(_get_interpreters_from_windows_registry())
 
-        for minor in [8, 9, 10, 11, 12]:
+        for version in thonny.SUPPORTED_VERSIONS:
+            no_dot = version.replace(".", "")
             for dir_ in [
-                "C:\\Python3%d" % minor,
-                "C:\\Python3%d-32" % minor,
-                "C:\\Python3%d-64" % minor,
-                "C:\\Program Files\\Python 3.%d" % minor,
-                "C:\\Program Files\\Python 3.%d-64" % minor,
-                "C:\\Program Files (x86)\\Python 3.%d" % minor,
-                "C:\\Program Files (x86)\\Python 3.%d-32" % minor,
-                "C:\\Program Files (x86)\\Python 3.%d-32" % minor,
-                os.path.expanduser(r"~\AppData\Local\Programs\Python\Python3%d" % minor),
-                os.path.expanduser(r"~\AppData\Local\Programs\Python\Python3%d-32" % minor),
+                "C:\\Python%s" % no_dot,
+                "C:\\Python%s-32" % no_dot,
+                "C:\\Python%s-64" % no_dot,
+                "C:\\Program Files\\Python %s" % version,
+                "C:\\Program Files\\Python %s-64" % version,
+                "C:\\Program Files (x86)\\Python %s" % version,
+                "C:\\Program Files (x86)\\Python %s-32" % version,
+                "C:\\Program Files (x86)\\Python %s-32" % version,
+                os.path.expanduser(r"~\AppData\Local\Programs\Python\Python%s" % no_dot),
+                os.path.expanduser(r"~\AppData\Local\Programs\Python\Python%s-32" % no_dot),
             ]:
                 path = os.path.join(dir_, WINDOWS_EXE)
                 if os.path.exists(path):
@@ -469,29 +495,25 @@ def _get_interpreters():
             apath = normpath_with_actual_case(dir_)
             if apath != dir_ and apath in dirs:
                 continue
-            for name in [
-                "python3",
-                "python3.8",
-                "python3.9",
-                "python3.10",
-                "python3.11",
-                "python3.12",
-            ]:
+            for version in ["3"] + thonny.SUPPORTED_VERSIONS:
+                name = "python" + version
                 path = os.path.join(dir_, name)
                 if os.path.exists(path):
                     result.add(path)
 
     if running_on_mac_os():
-        for version in ["3.8", "3.9", "3.10", "3.11", "3.12"]:
-            dir_ = os.path.join("/Library/Frameworks/Python.framework/Versions", version, "bin")
-            path = os.path.join(dir_, "python3")
+        for version in thonny.SUPPORTED_VERSIONS:
+            path = os.path.join(
+                "/Library/Frameworks/Python.framework/Versions", version, "bin", "python" + version
+            )
 
             if os.path.exists(path):
                 result.add(path)
 
     from shutil import which
 
-    for command in ["python3", "python3.8", "python3.9", "python3.10", "python3.11", "python3.12"]:
+    for version in thonny.SUPPORTED_VERSIONS:
+        command = "python" + version
         path = which(command)
         if path is not None and os.path.isabs(path):
             result.add(path)
@@ -511,70 +533,3 @@ def _get_interpreters():
         sorted_result.insert(0, default_path)
 
     return sorted_result
-
-
-def get_default_cpython_executable_for_backend() -> str:
-    if is_private_python(sys.executable) and running_in_virtual_environment():
-        # Private venv. Make an exception and use base Python for default backend.
-        default_path = get_base_executable()
-    else:
-        default_path = sys.executable.replace("pythonw.exe", "python.exe")
-
-    # In macOS bundle the path may have ..-s
-    default_path = os.path.normpath(default_path)
-
-    """ # Too confusing:
-    if running_on_mac_os():
-        # try to generalize so that the path can survive Python upgrade
-        ver = "{}.{}".format(*sys.version_info)
-        ver_fragment = f"/Versions/{ver}/bin/"
-        if ver_fragment in default_path:
-            generalized = default_path.replace(ver_fragment, "/Versions/Current/bin/")
-            if os.path.exists(generalized):
-                return generalized
-    """
-    return default_path
-
-
-def _get_interpreters_from_windows_registry():
-    # https://github.com/python/cpython/blob/master/Tools/msi/README.txt
-    # https://www.python.org/dev/peps/pep-0514/#installpath
-    import winreg
-
-    result = set()
-    for key in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
-        for version in [
-            "3.8",
-            "3.8-32",
-            "3.8-64",
-            "3.9",
-            "3.9-32",
-            "3.9-64",
-            "3.10",
-            "3.10-32",
-            "3.10-64",
-        ]:
-            for subkey in [
-                "SOFTWARE\\Python\\PythonCore\\" + version + "\\InstallPath",
-                "SOFTWARE\\Python\\PythonCore\\Wow6432Node\\" + version + "\\InstallPath",
-            ]:
-                try:
-                    dir_ = winreg.QueryValue(key, subkey)
-                    if dir_:
-                        path = os.path.join(dir_, WINDOWS_EXE)
-                        if os.path.exists(path):
-                            result.add(path)
-                except Exception:
-                    pass
-
-    return result
-
-
-def _check_venv_installed(parent):
-    try:
-        import venv
-
-        return True
-    except ImportError:
-        messagebox.showerror("Error", "Package 'venv' is not available.", parent=parent)
-        return False

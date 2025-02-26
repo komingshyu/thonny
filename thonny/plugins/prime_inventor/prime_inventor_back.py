@@ -13,10 +13,7 @@ logger = getLogger("thonny.plugins.prime_inventor.prime_inventor_back")
 
 
 class PrimeInventorMicroPythonBackend(BareMetalMicroPythonBackend):
-    def _get_sys_path_for_analysis(self) -> Optional[List[str]]:
-        return [
-            os.path.join(os.path.dirname(__file__), "api_stubs"),
-        ] + super()._get_sys_path_for_analysis()
+    pass
 
 
 if __name__ == "__main__":

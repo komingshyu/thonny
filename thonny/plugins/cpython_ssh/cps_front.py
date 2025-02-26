@@ -1,7 +1,7 @@
 import os.path
 import shutil
 from tkinter import messagebox
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from thonny import get_runner, get_shell, get_workbench
 from thonny.common import ImmediateCommand, ToplevelCommand
@@ -12,6 +12,7 @@ from thonny.running import SubprocessProxy
 class SshCPythonProxy(SubprocessProxy):
     def __init__(self, clean):
         self._host = get_workbench().get_option("SshCPython.host")
+        self._port = get_workbench().get_option("SshCPython.port")
         self._user = get_workbench().get_option("SshCPython.user")
         self._target_executable = get_workbench().get_option("SshCPython.executable")
 
@@ -37,13 +38,15 @@ class SshCPythonProxy(SubprocessProxy):
             repr(
                 {
                     "host": self._host,
+                    "port": self._port,
                     "user": self._user,
                     "interpreter": self._target_executable,
                     "cwd": self._get_initial_cwd(),
                     "main_backend_options": {
                         "run.warn_module_shadowing": get_workbench().get_option(
                             "run.warn_module_shadowing"
-                        )
+                        ),
+                        "user_stubs_location": self.get_user_stubs_location(),
                     },
                 }
             ),
@@ -51,6 +54,9 @@ class SshCPythonProxy(SubprocessProxy):
 
     def _send_initial_input(self) -> None:
         assert self._proc is not None
+        assert self.is_connected()
+        assert self.process_is_alive()
+
         self._proc.stdin.write((get_ssh_password("SshCPython") or "") + "\n")
         self._proc.stdin.flush()
 
@@ -140,9 +146,12 @@ class SshCPythonProxy(SubprocessProxy):
         return f"{cls.backend_description}  •  {user} @ {host} : {executable}"
 
     @classmethod
-    def get_switcher_entries(cls):
+    def get_switcher_entries(cls) -> List[Tuple[Dict[str, Any], str, str]]:
         confs = sorted(cls.get_last_configurations(), key=cls.get_switcher_configuration_label)
-        return [(conf, cls.get_switcher_configuration_label(conf)) for conf in confs]
+        return [
+            (conf, cls.get_switcher_configuration_label(conf), conf[cls.backend_name + ".host"])
+            for conf in confs
+        ]
 
     def has_custom_system_shell(self):
         return True
@@ -164,12 +173,21 @@ class SshCPythonProxy(SubprocessProxy):
     def has_local_interpreter(self):
         return False
 
+    def interpreter_is_cpython_compatible(self) -> bool:
+        return True
+
     @classmethod
     def is_valid_configuration(cls, conf: Dict[str, Any]) -> bool:
         return True
 
     def can_install_packages_from_files(self) -> bool:
         return False
+
+    def get_machine_id(self) -> str:
+        return self._host
+
+    def get_packages_target_dir_with_comment(self) -> Tuple[Optional[str], Optional[str]]:
+        return None, self.get_externally_managed_message()
 
 
 class SshProxyConfigPage(BaseSshProxyConfigPage):

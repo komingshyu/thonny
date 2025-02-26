@@ -1,9 +1,12 @@
 import logging
 import os.path
+import re
 import sys
 import time
 from logging import getLogger
 from typing import TYPE_CHECKING, List, Optional, cast
+
+SUPPORTED_VERSIONS = ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
 if TYPE_CHECKING:
     # Following imports are required for MyPy
@@ -48,6 +51,11 @@ _runner = None
 _last_module_count = 0
 _last_modules = set()
 _last_time = time.time()
+
+
+def remove_weird_characters(input_string: str) -> str:
+    cleaned_string = re.sub(r"[^a-z]", "", input_string)
+    return cleaned_string
 
 
 def report_time(label: str) -> None:
@@ -122,12 +130,10 @@ def get_ipc_file_path():
     if not base_dir or not os.path.exists(base_dir):
         base_dir = get_thonny_user_dir()
 
-    for name in ("LOGNAME", "USER", "LNAME", "USERNAME"):
-        if name in os.environ:
-            username = os.environ.get(name)
-            break
-    else:
-        username = os.path.basename(os.path.expanduser("~"))
+    import getpass
+
+    username = getpass.getuser()
+    username = remove_weird_characters(username.lower())
 
     ipc_dir = os.path.join(base_dir, "thonny-%s" % username)
     os.makedirs(ipc_dir, exist_ok=True)
@@ -135,7 +141,7 @@ def get_ipc_file_path():
     if not sys.platform == "win32":
         os.chmod(ipc_dir, 0o700)
 
-    _ipc_file = os.path.join(ipc_dir, "ipc.sock")
+    _ipc_file = os.path.join(ipc_dir, get_profile() + "-ipc.sock")
     return _ipc_file
 
 
@@ -244,7 +250,11 @@ def configure_backend_logging() -> None:
 
 
 def get_backend_log_file():
-    return os.path.join(get_thonny_user_dir(), "backend.log")
+    file_name = "backend.log"
+    if any(var in os.environ for var in ["SSH_CLIENT", "SSH_TTY", "SSH_CONNECTION"]):
+        file_name = "ssh_" + file_name
+
+    return os.path.join(get_thonny_user_dir(), file_name)
 
 
 def configure_logging(log_file, console_level=None):
@@ -297,13 +307,29 @@ def get_sys_path_directory_containg_plugins() -> str:
     return get_user_site_packages_dir_for_base(get_user_base_directory_for_plugins())
 
 
+def get_profile() -> str:
+    try:
+        idx = sys.argv.index("--profile")
+    except ValueError:
+        return "default"
+
+    if len(sys.argv) > idx + 1:
+        return sys.argv[idx + 1]
+
+    return "default"
+
+
 def _compute_thonny_user_dir():
     env_var = os.environ.get("THONNY_USER_DIR", "")
     if env_var:
         # back-end processes always choose this path
         return os.path.expanduser(env_var)
 
-    # Following is only for the front-end process
+    return os.path.join(_compute_thonny_profiles_dir(), get_profile())
+
+
+def _compute_thonny_profiles_dir():
+    # Following is used only in the front-end process
     from thonny.common import is_private_python, running_in_virtual_environment
     from thonny.misc_utils import get_roaming_appdata_dir
 

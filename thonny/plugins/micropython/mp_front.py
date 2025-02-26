@@ -4,7 +4,6 @@ import shutil
 import sys
 import time
 from logging import getLogger
-from textwrap import dedent
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,7 +19,7 @@ from thonny.config_ui import (
     add_vertical_separator,
 )
 from thonny.languages import tr
-from thonny.misc_utils import download_and_parse_json, levenshtein_distance
+from thonny.misc_utils import download_and_parse_json
 from thonny.plugins.backend_config_page import (
     BaseSshProxyConfigPage,
     TabbedBackendDetailsConfigurationPage,
@@ -43,9 +42,7 @@ WEBREPL_PORT_VALUE = "webrepl"
 VIDS_PIDS_TO_AVOID_IN_GENERIC_BACKEND = set()
 
 MICROPYTHON_LIB_INDEX_URL = "https://micropython.org/pi/v2/index.json"
-MICROPYTHON_LIB_METADATA_URL = (
-    "https://raw.githubusercontent.com/thonny/thonny/master/data/micropython-lib-metadata.json"
-)
+MICROPYTHON_LIB_METADATA_URL = "https://raw.githubusercontent.com/aivarannamaa/pipkin/master/data/micropython-lib-extra-metadata.json"
 _mp_lib_index_cache = None
 _mp_lib_metadata_cache = None
 
@@ -53,7 +50,7 @@ _mp_lib_metadata_cache = None
 class MicroPythonProxy(SubprocessProxy):
     def __init__(self, clean):
         self._lib_dirs = []
-        super().__init__(clean, running.get_front_interpreter_for_subprocess())
+        super().__init__(clean)
 
     def get_packages_target_dir_with_comment(self) -> Tuple[Optional[str], Optional[str]]:
         lib_dirs = self.get_lib_dirs()
@@ -92,6 +89,9 @@ class MicroPythonProxy(SubprocessProxy):
         return True
 
     def has_local_interpreter(self):
+        return False
+
+    def interpreter_is_cpython_compatible(self) -> bool:
         return False
 
     def can_debug(self) -> bool:
@@ -135,45 +135,27 @@ class MicroPythonProxy(SubprocessProxy):
         return False
 
     @classmethod
+    def get_pypi_common_tokens(cls) -> List[str]:
+        return ["micropython"]
+
+    @classmethod
     def search_packages(cls, query: str) -> List[DistInfo]:
-        from thonny.plugins.pip_gui import perform_pypi_search
+        from thonny.plugins.pip_gui import compute_dist_name_similarity, perform_pypi_search
 
         norm_query = canonicalize_name(query.strip())
+        query_parts = norm_query.split("-")
 
-        def distance(item: DistInfo) -> int:
-            norm_name = canonicalize_name(item.name)
-            if norm_name == norm_query:
-                # don't argue with exact match
-                return 0
-
-            result = levenshtein_distance(norm_name, norm_query)
-
-            if "micropython" in norm_query and item.source == "micropython-lib":
-                # direct the user towards micropython-lib and names without "micropython"
-                new_result = levenshtein_distance(
-                    norm_name, norm_query.replace("micropython", "").strip("-")
-                )
-                if new_result < result:
-                    result = new_result
-
-            # try matching without qualifiers
-            simple_name = norm_name
-            simple_query = norm_query
-            for qualifier in ["adafruit-circuitpython", "circuitpython", "micropython"]:
-                simple_name = simple_name.replace(qualifier, "").replace("--", "-").strip("-")
-                simple_query = simple_query.replace(qualifier, "").replace("--", "-").strip("-")
-
-            new_result = levenshtein_distance(simple_name, simple_query)
-            if new_result < result:
-                result = new_result + 1
-
-            return result
+        def similarity(item: DistInfo) -> float:
+            return compute_dist_name_similarity(
+                item.name, query_parts, cls.get_pypi_common_tokens()
+            )
 
         mp_lib_result = cls._get_micropython_lib_dist_infos()
-        pypi_result = perform_pypi_search(query)
-        if "micropython" not in query.lower() and "circuitpython" not in query.lower():
-            pypi_result += perform_pypi_search("micropython " + query)
-            pypi_result += perform_pypi_search("circuitpython " + query)
+        pypi_result = perform_pypi_search(
+            query,
+            get_workbench().get_data_url("pypi_summaries_microcircuit.json"),
+            cls.get_pypi_common_tokens(),
+        )
 
         combined_result = []
         mp_lib_names = set()
@@ -202,8 +184,8 @@ class MicroPythonProxy(SubprocessProxy):
             if norm_name == norm_query or mentions_right_tokens:
                 combined_result.append(item)
 
-        sorted_result = sorted(combined_result, key=distance)
-        filtered_result = filter(lambda x: distance(x) < 4, sorted_result[:20])
+        sorted_result = sorted(combined_result, key=similarity, reverse=True)
+        filtered_result = filter(lambda x: similarity(x) > 0.6, sorted_result[:20])
 
         return list(filtered_result)
 
@@ -272,9 +254,10 @@ class MicroPythonProxy(SubprocessProxy):
 
         return super().get_package_info_from_index(name, version)
 
-    def get_version_list_from_index(self, name: str) -> List[str]:
+    @classmethod
+    def get_version_list_from_index(cls, name: str) -> List[str]:
         # Try mp.org first
-        index_data = self._get_micropython_lib_index_data()
+        index_data = cls._get_micropython_lib_index_data()
 
         for package in index_data["packages"]:
             if canonicalize_name(package["name"]) == canonicalize_name(name):
@@ -287,26 +270,38 @@ class MicroPythonProxy(SubprocessProxy):
 
     @classmethod
     def _augment_dist_info(cls, dist_info: DistInfo) -> DistInfo:
-        metadata = cls._get_micropython_lib_metadata()
         norm_name = canonicalize_name(dist_info.name)
-        home_page = dist_info.home_page
-        summary = dist_info.summary
+        extra_metadata = cls._get_micropython_lib_metadata().get(norm_name, {})
 
-        if (home_page is None or summary is None) and norm_name in metadata:
-            if home_page is None:
-                home_page = metadata[norm_name].get("project_url")
-            if summary is None:
-                summary = metadata[norm_name].get("description")
-            return dataclasses.replace(dist_info, summary=summary, home_page=home_page)
+        if dist_info.home_page is None and "home_page" in extra_metadata:
+            dist_info = dataclasses.replace(dist_info, home_page=extra_metadata["home_page"])
+
+        if dist_info.summary is None and "description" in extra_metadata:
+            dist_info = dataclasses.replace(dist_info, summary=extra_metadata["description"])
+
+        project_urls = dict(dist_info.project_urls) or {}
+        if "source_url" in extra_metadata:
+            project_urls["Source"] = extra_metadata["source_url"]
+            dist_info = dataclasses.replace(dist_info, project_urls=project_urls)
 
         return dist_info
+
+    def needs_disconnect_button(self):
+        return True
+
+    def get_typeshed_path(self) -> Optional[str]:
+        return os.path.join(os.path.dirname(__file__), "typeshed")
 
 
 class BareMetalMicroPythonProxy(MicroPythonProxy):
     def __init__(self, clean):
         self._port = get_workbench().get_option(self.backend_name + ".port")
+        self._machine_id = None  # will be set later
+        if self._port == "auto":
+            # may come from pre-Thonny 5 configuration file
+            logger.warning("Ignoring 'auto' port")
+            self._port = None
         self._clean_start = clean
-        self._fix_port()
 
         super().__init__(clean)
 
@@ -319,38 +314,20 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
             # let the OS release the port
             time.sleep(0.1)
 
-    def _fix_port(self):
-        if self._port == WEBREPL_PORT_VALUE:
-            return
-
-        elif self._port == "auto":
-            potential = self._detect_potential_ports()
-            if len(potential) == 1:
-                self._port = potential[0][0]
-            else:
-                self._port = None
-                message = dedent(
-                    """\
-                    Couldn't find the device automatically. 
-                    Check the connection (making sure the device is not in bootloader mode) or choose
-                    "Configure interpreter" in the interpreter menu (bottom-right corner of the window)
-                    to select specific port or another interpreter."""
-                )
-
-                if len(potential) > 1:
-                    _, descriptions = zip(*potential)
-                    message += "\n\nLikely candidates are:\n * " + "\n * ".join(descriptions)
-
-                self._show_error(message)
-
     def _start_background_process(self, clean=None, extra_args=[]):
-        if self._port is None:
-            return
+        logger.info(
+            "Starting background process (BareMetal), clean: %r, extra_args: %r", clean, extra_args
+        )
 
         # refresh the ports cache, so that the next uncached request (in BackendRestart handler)
         # is less likely to race with the back-end process trying to open a port and getting a
         # PermissionError (has happened in Windows)
         list_serial_ports(max_cache_age=0, skip_logging=False)
+
+        # also, look up and remember the serial number of the device.
+        # Luckily, the port info cache has been just refreshed, so it will be quick
+        self._machine_id = get_machine_id_for_current_conf(self.backend_name)
+
         super()._start_background_process(clean=clean, extra_args=extra_args)
 
     def _get_launcher_with_args(self):
@@ -366,6 +343,7 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
                 self.backend_name + ".interrupt_on_connect"
             ),
             "proxy_class": self.__class__.__name__,
+            "user_stubs_location": self.get_user_stubs_location(),
         }
         if self._port == WEBREPL_PORT_VALUE:
             args["url"] = get_workbench().get_option(self.backend_name + ".webrepl_url")
@@ -518,6 +496,9 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
 
     def disconnect(self):
         self.destroy()
+        self._show_error(
+            "\nDisconnected.\n\nClick ☐ at the bottom of the window or use Stop/Restart to reconnect."
+        )
 
     def get_node_label(self):
         if "CircuitPython" in self._welcome_text:
@@ -557,7 +538,6 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
         return bool(configuration.get(f"{self.backend_name}.webrepl_url", False))
 
     def get_current_switcher_configuration(self) -> Dict[str, Any]:
-        # NB! using current port value, not the configured one (which may be "auto")
         conf = {
             "run.backend_name": self.backend_name,
             f"{self.backend_name}.port": self._port,
@@ -572,7 +552,9 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
     @classmethod
     def get_switcher_configuration_label(cls, conf: Dict[str, Any]) -> str:
         port = conf[f"{cls.backend_name}.port"]
-        if port == WEBREPL_PORT_VALUE:
+        if port is None:
+            return f"{cls.backend_description}  •  <no port>"
+        elif port == WEBREPL_PORT_VALUE:
             url = conf[f"{cls.backend_name}.webrepl_url"]
             return f"{cls.backend_description}  •  {url}"
         else:
@@ -588,14 +570,15 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
                 return f"{cls.backend_description}  •  {port}"
 
     @classmethod
-    def get_switcher_entries(cls):
+    def get_switcher_entries(cls) -> List[Tuple[Dict[str, Any], str, str]]:
         def should_show(conf):
             port = conf[f"{cls.backend_name}.port"]
+            if port == "auto":
+                # may come from pre-Thonny 5 conf
+                port = None
+
             if port == WEBREPL_PORT_VALUE:
                 return True
-            elif port == "auto":
-                potential_ports = cls._detect_potential_ports()
-                return len(potential_ports) > 0
             else:
                 for p in list_serial_ports():
                     if p.device == port:
@@ -611,7 +594,14 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
                 relevant_confs.append(conf)
 
         sorted_confs = sorted(relevant_confs, key=cls.get_switcher_configuration_label)
-        return [(conf, cls.get_switcher_configuration_label(conf)) for conf in sorted_confs]
+        return [
+            (
+                conf,
+                cls.get_switcher_configuration_label(conf),
+                get_machine_id_for_conf(cls.backend_name, conf),
+            )
+            for conf in sorted_confs
+        ]
 
     def has_custom_system_shell(self):
         return self._port and self._port != WEBREPL_PORT_VALUE
@@ -653,6 +643,9 @@ class BareMetalMicroPythonProxy(MicroPythonProxy):
 
     def can_install_packages_from_files(self) -> bool:
         return True
+
+    def get_machine_id(self) -> str:
+        return self._machine_id
 
 
 class BareMetalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
@@ -938,7 +931,6 @@ class BareMetalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
         ports = list_serial_ports(max_cache_age=0, skip_logging=True)
         self._ports_by_desc = {get_serial_port_label(p): p for p in ports}
         self._port_names_by_desc = {get_serial_port_label(p): p.device for p in ports}
-        self._port_names_by_desc["< " + tr("Try to detect port automatically") + " >"] = "auto"
 
         if self.allow_webrepl:
             self._port_names_by_desc[WEBREPL_OPTION_DESC] = WEBREPL_PORT_VALUE
@@ -1109,9 +1101,12 @@ class BareMetalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
     def should_restart(self, changed_options: List[str]):
         return self._connection_is_modified() or self._has_opened_python_flasher
 
-    def apply(self, changed_options: List[str]):
+    def get_new_machine_id(self) -> str:
+        return get_machine_id_for_current_conf(self.backend_name)
+
+    def apply(self, changed_options: List[str]) -> bool:
         if not self._connection_is_modified():
-            return
+            return True
 
         else:
             port_name = self.get_selected_port_name()
@@ -1129,6 +1124,8 @@ class BareMetalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
                 get_workbench().set_option(
                     self.backend_name + ".webrepl_password", self._webrepl_password_var.get()
                 )
+
+        return True
 
     def destroy(self):
         if self._port_polling_after_id is not None:
@@ -1209,6 +1206,7 @@ class LocalMicroPythonProxy(MicroPythonProxy):
                 {
                     "interpreter": self._target_executable,
                     "cwd": self.get_cwd(),
+                    "user_stubs_location": self.get_user_stubs_location(),
                 }
             ),
         ]
@@ -1254,7 +1252,7 @@ class LocalMicroPythonProxy(MicroPythonProxy):
         self.destroy()
 
     def get_node_label(self):
-        return "Local"
+        return tr("This computer")
 
     def get_full_label(self):
         return self._target_executable
@@ -1278,13 +1276,13 @@ class LocalMicroPythonProxy(MicroPythonProxy):
         )
 
     @classmethod
-    def get_switcher_entries(cls):
+    def get_switcher_entries(cls) -> List[Tuple[Dict[str, Any], str, str]]:
         confs = sorted(
             cls.get_last_configurations(), key=lambda conf: conf[f"{cls.backend_name}.executable"]
         )
 
         return [
-            (conf, cls.get_switcher_configuration_label(conf))
+            (conf, cls.get_switcher_configuration_label(conf), "localhost")
             for conf in confs
             if os.path.exists(conf[f"{cls.backend_name}.executable"])
             or shutil.which(conf[f"{cls.backend_name}.executable"])
@@ -1316,10 +1314,14 @@ class LocalMicroPythonConfigPage(TabbedBackendDetailsConfigurationPage):
     def should_restart(self, changed_options: List[str]):
         return "LocalMicroPython.executable" in changed_options
 
+    def get_new_machine_id(self) -> str:
+        return "localhost"
+
 
 class SshMicroPythonProxy(MicroPythonProxy):
     def __init__(self, clean):
         self._host = get_workbench().get_option(f"{self.backend_name}.host")
+        self._port = get_workbench().get_option(f"{self.backend_name}.port")
         self._user = get_workbench().get_option(f"{self.backend_name}.user")
         self._target_executable = get_workbench().get_option(f"{self.backend_name}.executable")
 
@@ -1332,7 +1334,9 @@ class SshMicroPythonProxy(MicroPythonProxy):
             "cwd": get_workbench().get_option(f"{self.backend_name}.cwd") or "",
             "interpreter": self._target_executable,
             "host": self._host,
+            "port": self._port,
             "user": self._user,
+            "user_stubs_location": self.get_user_stubs_location(),
         }
 
         args.update(self._get_time_args())
@@ -1430,9 +1434,12 @@ class SshMicroPythonProxy(MicroPythonProxy):
         return f"{cls.backend_description}  •  {user} @ {host} : {executable}"
 
     @classmethod
-    def get_switcher_entries(cls):
+    def get_switcher_entries(cls) -> List[Tuple[Dict[str, Any], str, str]]:
         confs = sorted(cls.get_last_configurations(), key=cls.get_switcher_configuration_label)
-        return [(conf, cls.get_switcher_configuration_label(conf)) for conf in confs]
+        return [
+            (conf, cls.get_switcher_configuration_label(conf), conf[cls.backend_name + ".host"])
+            for conf in confs
+        ]
 
     def has_custom_system_shell(self):
         return True
@@ -1458,6 +1465,9 @@ class SshMicroPythonProxy(MicroPythonProxy):
     def can_install_packages_from_files(self) -> bool:
         return False
 
+    def get_machine_id(self) -> str:
+        return self._host
+
 
 class SshMicroPythonConfigPage(BaseSshProxyConfigPage):
     pass
@@ -1479,6 +1489,25 @@ def get_serial_port_label(p) -> str:
     desc = desc.replace("\x00", "").strip()
 
     return f"{desc} @ {p.device}"
+
+
+def get_machine_id_for_current_conf(backend_name: str) -> str:
+    conf = {}
+    for name in ["port", "webrepl_url"]:
+        key = backend_name + "." + name
+        conf[key] = get_workbench().get_option(key)
+    return get_machine_id_for_conf(backend_name, conf)
+
+
+def get_machine_id_for_conf(backend_name: str, conf: Dict[str, Any]) -> str:
+    port = conf[backend_name + ".port"]
+    if port == WEBREPL_PORT_VALUE:
+        return get_workbench().get_option(conf[backend_name + ".webrepl_url"])
+    try:
+        return get_port_info(port).serial_number
+    except Exception:
+        logger.exception("Could not get port_info for %r", port)
+        return "<unknown>"
 
 
 def list_serial_ports(max_cache_age: float = 0.5, skip_logging: bool = False):
@@ -1517,14 +1546,6 @@ def _list_serial_ports_uncached(skip_logging: bool = False):
         os.path.islink = old_islink
         if not skip_logging:
             logger.info("Done listing serial ports")
-
-
-def port_exists(device):
-    for port in list_serial_ports():
-        if port.device == device:
-            return True
-
-    return False
 
 
 def get_uart_adapter_vids_pids():

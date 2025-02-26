@@ -1,5 +1,5 @@
 from tkinter import messagebox
-from typing import List
+from typing import List, Optional
 
 from thonny import get_workbench, languages
 from thonny.config_ui import (
@@ -25,16 +25,18 @@ class GeneralConfigurationPage(ConfigurationPage):
         add_option_checkbox(self, "general.event_logging", tr("Log program usage events"))
         add_option_checkbox(
             self,
-            "file.reopen_all_files",
-            tr("Reopen all files from previous session"),
+            "file.reopen_files",
+            tr("Reopen files from previous session"),
         )
         if running_on_linux():
-            add_option_checkbox(
-                self,
-                "file.avoid_zenity",
-                tr("Use Tk file dialogs instead of Zenity"),
-                tooltip=tr("Select if the file dialogs end up behind the main window"),
-            )
+            import shutil
+
+            if shutil.which("zenity"):
+                add_option_checkbox(
+                    self,
+                    "file.use_zenity",
+                    tr("Use Zenity file dialogs"),
+                )
 
         add_option_checkbox(
             self,
@@ -95,7 +97,7 @@ class GeneralConfigurationPage(ConfigurationPage):
             font="BoldTkDefaultFont",
         )
 
-    def apply(self, changed_options: List[str]):
+    def apply(self, changed_options: List[str]) -> bool:
         get_workbench().update_debug_mode()
 
         env = []
@@ -115,6 +117,7 @@ class GeneralConfigurationPage(ConfigurationPage):
                 return False
 
         get_workbench().set_option("general.environment", env)
+        return True
 
 
 def load_plugin() -> None:

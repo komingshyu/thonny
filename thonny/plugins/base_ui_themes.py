@@ -225,6 +225,7 @@ def clam() -> BasicUiThemeSettings:
             "configure": {
                 "background": darker,
                 "activebackground": frame,
+                "hoverbackground": frame,
                 "indicatorbackground": frame,
             }
         },
@@ -409,6 +410,7 @@ def aqua() -> BasicUiThemeSettings:
                 "selectborderwidth": 0,
                 "insertwidth": 1,
                 "stipple": "",
+                "aqua_based": 1,
             },
             "map": {
                 "foreground": [
@@ -557,7 +559,7 @@ def windows() -> CompoundUiThemeSettings:
                     "disabledforeground": "SystemGrayText",
                     "highlightbackground": "SystemActiveBorder",
                     "highlightcolor": "SystemActiveBorder",
-                    "highlightthickness": scale(1),
+                    "highlightthickness": 0,
                 }
             },
             "ViewBody.TFrame": {
@@ -588,6 +590,7 @@ def windows() -> CompoundUiThemeSettings:
                 "configure": {
                     "background": "systemButtonFace",
                     "activebackground": "#dadada",
+                    "foreground": "SystemWindowText",
                 }
             },
             "CustomNotebook": {
@@ -599,6 +602,7 @@ def windows() -> CompoundUiThemeSettings:
                 "configure": {
                     "background": "systemButtonFace",
                     "activebackground": "systemWindow",
+                    "hoverbackground": "systemWindow",
                     #                    "indicatorbackground": "systemHighlight",
                     "indicatorbackground": "system3dLight",
                     "indicatorheight": 1,
@@ -652,7 +656,7 @@ def enhanced_clam() -> CompoundUiThemeSettings:
                     "disabledforeground": "#999999",
                     "highlightbackground": "#4a6984",
                     "highlightcolor": "#4a6984",
-                    "highlightthickness": scale(1),
+                    "highlightthickness": 0,
                 }
             },
             "ViewTab.TLabel": {"configure": {"padding": [scale(5), 0]}},
@@ -727,17 +731,30 @@ def enhanced_aqua() -> CompoundUiThemeSettings:
             },
             "CustomNotebook.Tab": {
                 "configure": {
-                    "background": "systemWindowBackgroundColor2",
+                    "background": "systemWindowBackgroundColor",
                     "activebackground": "systemWindowBackgroundColor",
+                    "hoverbackground": "systemWindowBackgroundColor3",
                     "indicatorbackground": "systemWindowBackgroundColor",
+                    "dynamic_border": 1,
                 }
             },
             "Listbox": {
                 "configure": {
                     "background": "SystemTextBackgroundColor",
                     "foreground": "SystemTextColor",
-                    "selectBackground": "SystemSelectedTextBackgroundColor",
-                    "selectForeground": "SystemSelectedTextColor",
+                    "selectbackground": "SystemSelectedTextBackgroundColor",
+                    "selectforeground": "SystemSelectedTextColor",
+                }
+            },
+            "TEntry": {
+                "map": {
+                    "background": [("readonly", "systemWindowBackgroundColor")],
+                },
+            },
+            "Heading": {"configure": {"topmost_pixels_to_hide": 2}},
+            "Vertical.TScrollbar": {
+                "configure": {
+                    "rightmost_pixels_to_hide": 1,
                 }
             },
         },
@@ -773,13 +790,10 @@ def load_plugin() -> None:
         "Enhanced Clam",
         "clam",
         enhanced_clam,
-        images={"tab-close": "tab-close-clam", "tab-close-active": "tab-close-active-clam"},
     )
 
     if "vista" in original_themes:
         get_workbench().add_ui_theme("Windows", "vista", windows)
 
     if "aqua" in original_themes:
-        get_workbench().add_ui_theme(
-            "Kind of Aqua", "aqua", enhanced_aqua, enhanced_aqua_dark_overrides
-        )
+        get_workbench().add_ui_theme("macOS", "aqua", enhanced_aqua, enhanced_aqua_dark_overrides)

@@ -3,10 +3,13 @@
 """
 Classes used both by front-end and back-end
 """
+from __future__ import annotations
+
 import dataclasses
 import os.path
 import site
 import sys
+import urllib.parse
 from collections import namedtuple
 from dataclasses import dataclass
 from logging import getLogger
@@ -19,8 +22,10 @@ REPL_PSEUDO_FILENAME = "<stdin>"
 MESSAGE_MARKER = "\x02"
 OBJECT_LINK_START = "[object_link_for_thonny=%d]"
 OBJECT_LINK_END = "[/object_link_for_thonny]"
-REMOTE_PATH_MARKER = " :: "
 PROCESS_ACK = "OK"
+ALL_EXPLAINED_STATUS_CODE = 193
+
+NBSP = "\u00A0"
 
 IGNORED_FILES_AND_DIRS = [
     "System Volume Information",
@@ -71,6 +76,8 @@ class DistInfo:
     requires: List[str] = dataclasses.field(default_factory=list)
     source: Optional[str] = None
     installed_location: Optional[str] = None
+    meta_dir_path: Optional[str] = None
+    complete: bool = True
 
 
 class Record:
@@ -386,21 +393,6 @@ def get_site_dir(symbolic_name, executable=None):
     return result if result else None
 
 
-def get_base_executable():
-    if sys.exec_prefix == sys.base_exec_prefix:
-        return sys.executable
-
-    if sys.platform == "win32":
-        guess = sys.base_exec_prefix + "\\" + os.path.basename(sys.executable)
-        if os.path.isfile(guess):
-            return normpath_with_actual_case(guess)
-
-    if os.path.islink(sys.executable):
-        return os.path.realpath(sys.executable)
-
-    raise RuntimeError("Don't know how to locate base executable")
-
-
 def get_augmented_system_path(extra_dirs):
     path_items = os.environ.get("PATH", "").split(os.pathsep)
 
@@ -425,45 +417,6 @@ def update_system_path(env, value):
             env["PATH"] = value
     else:
         env["PATH"] = value
-
-
-@dataclass
-class SignatureParameter:
-    kind: str
-    name: str
-    annotation: Optional[str]
-    default: Optional[str]
-
-
-@dataclass
-class SignatureInfo:
-    name: str
-    params: List[SignatureParameter]
-    return_type: Optional[str]
-    current_param_index: Optional[int] = None
-    call_bracket_start: Optional[Tuple[int, int]] = None
-
-
-@dataclass
-class CompletionInfo:
-    name: str
-    name_with_symbols: str
-    full_name: str
-    type: str
-    prefix_length: int  # the number of chars to be deleted before inserting name
-    signatures: Optional[List[SignatureInfo]]
-    docstring: Optional[str]
-    module_name: Optional[str]
-    module_path: Optional[str]
-
-
-@dataclass
-class NameReference:
-    module_name: str
-    module_path: str
-    row: int
-    column: int
-    length: int
 
 
 class UserError(RuntimeError):
@@ -516,15 +469,15 @@ def get_single_dir_child_data(path: str, include_hidden: bool = False) -> Option
                     name = os.path.basename(full_child_path)
                     st = os.stat(full_child_path, dir_fd=None, follow_symlinks=True)
                     result[name] = {
-                        "size": None if os.path.isdir(full_child_path) else st.st_size,
-                        "modified": st.st_mtime,
+                        "size_bytes": None if os.path.isdir(full_child_path) else st.st_size,
+                        "modified_epoch": st.st_mtime,
                         "hidden": hidden,
                     }
         except PermissionError:
             result["<not accessible>"] = {
                 "kind": "error",
-                "size": -1,
-                "modified": None,
+                "size_bytes": -1,
+                "modified_epoch": None,
                 "hidden": None,
             }
 
@@ -584,8 +537,8 @@ def get_windows_volumes_info():
                     label = volume_name + " (" + drive + ")"
                     result[path] = {
                         "label": label,
-                        "size": None,
-                        "modified": max(st.st_mtime, st.st_ctime),
+                        "size_bytes": None,
+                        "modified_epoch": max(st.st_mtime, st.st_ctime),
                     }
                 except OSError as e:
                     logger.warning("Could not get information for %s", path, exc_info=e)
@@ -644,8 +597,8 @@ def get_windows_network_locations():
                 target = get_windows_lnk_target(lnk_path)
                 result[target] = {
                     "label": entry.name + " (" + target + ")",
-                    "size": None,
-                    "modified": None,
+                    "size_bytes": None,
+                    "modified_epoch": None,
                 }
             except Exception:
                 logger.error("Can't get target from %s", lnk_path, exc_info=True)
@@ -802,20 +755,7 @@ def is_private_python(executable):
 
 
 def running_in_virtual_environment() -> bool:
-    return (
-        hasattr(sys, "base_prefix")
-        and sys.base_prefix != sys.prefix
-        or hasattr(sys, "real_prefix")
-        and getattr(sys, "real_prefix") != sys.prefix
-    )
-
-
-def is_remote_path(s: str) -> bool:
-    return REMOTE_PATH_MARKER in s
-
-
-def is_local_path(s: str) -> bool:
-    return not is_remote_path(s) and not s.startswith("<")
+    return sys.base_prefix != sys.prefix
 
 
 def export_distributions_info_from_dir(dir_path: str) -> List[DistInfo]:
@@ -824,7 +764,7 @@ def export_distributions_info_from_dir(dir_path: str) -> List[DistInfo]:
     dists = MetadataPathFinder.find_distributions(
         context=DistributionFinder.Context(path=[dir_path])
     )
-    return export_distributions_info(dists)
+    return export_distributions_info(dists, assume_pypi=False)
 
 
 def export_installed_distributions_info() -> List[DistInfo]:
@@ -847,10 +787,10 @@ def export_installed_distributions_info() -> List[DistInfo]:
 
     from importlib.metadata import distributions
 
-    return export_distributions_info(distributions())
+    return export_distributions_info(distributions(), assume_pypi=True)
 
 
-def export_distributions_info(dists: Iterable) -> List[DistInfo]:
+def export_distributions_info(dists: Iterable, assume_pypi: bool) -> List[DistInfo]:
     def get_project_urls(dist):
         result = {}
         for key, value in dist.metadata.items():
@@ -861,14 +801,31 @@ def export_distributions_info(dists: Iterable) -> List[DistInfo]:
                 result[label] = url
         return result
 
+    def get_dist_name(dist):
+        if hasattr(dist, "name"):
+            return dist.name
+        else:
+            # I met this case with Python 3.9
+            return dist.metadata["Name"]
+
     def infer_package_url(dist):
-        pypi_url_name = dist.name.replace("_", "-")
-        # NB! no guarantee that this package exists at PyPI or related to installed package
-        return f"https://pypi.org/project/{dist.name}/"
+        name = get_dist_name(dist)
+
+        if (
+            not assume_pypi
+            and "micropython" not in name.lower()
+            and "circuitpython" not in name.lower()
+        ):
+            # probably a micropython-lib package
+            return None
+
+        pypi_url_name = name.replace("_", "-")
+        # NB! no guarantee that this package exists at PyPI or is related to installed package
+        return f"https://pypi.org/project/{pypi_url_name}/"
 
     return [
         DistInfo(
-            name=dist.name,
+            name=get_dist_name(dist),
             version=dist.version,
             requires=dist.requires or [],
             summary=dist.metadata["Summary"] or None,
@@ -882,3 +839,55 @@ def export_distributions_info(dists: Iterable) -> List[DistInfo]:
         )
         for dist in dists
     ]
+
+
+def try_get_base_executable(executable: str) -> Optional[str]:
+    if os.path.islink(executable):
+        # a venv executable may link to another venv executable
+        return try_get_base_executable(os.path.realpath(executable))
+
+    may_be_venv_exe = False
+    for location in ["..", "."]:
+        cfg_path = os.path.join(os.path.dirname(executable), location, "pyvenv.cfg")
+
+        if not os.path.isfile(cfg_path):
+            continue
+
+        may_be_venv_exe = True
+
+        atts = {}
+        with open(cfg_path) as fp:
+            for line in fp:
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", maxsplit=1)
+                atts[key.strip()] = value.strip()
+
+        if "home" not in atts:
+            logger.warning("No home in %s", cfg_path)
+            continue
+
+        if "executable" in atts:
+            # venv-s starting with Python 3.11
+            return atts["executable"]
+
+        if "base-executable" in atts:
+            # virtualenv-s starting with ???
+            return atts["base-executable"]
+
+    # pyvenv.cfg may be present also in non-virtual envs.
+    # I can check for this in certain case
+    if (
+        may_be_venv_exe
+        and os.path.samefile(sys.executable, executable)
+        and sys.prefix == sys.base_prefix
+    ):
+        may_be_venv_exe = False
+
+    if may_be_venv_exe:
+        # should only happen with venv-s before Python 3.11 or with uv
+        # as Python 3.11 started recording executable in pyvenv.cfg
+        logger.warning("Could not find base executable of %s", executable)
+        return None
+    else:
+        return executable

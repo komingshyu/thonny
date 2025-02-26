@@ -30,7 +30,7 @@ It's a really nice language for teaching programming. It also has some nice tech
 Libraries, resources and tools
 ------------------------------
 * asttokens (https://github.com/gristlabs/asttokens) provides source locations to AST nodes.
-* jedi (http://jedi.readthedocs.io) is used for code completion, go to definition, etc.
+* basedpyright (https://docs.basedpyright.com/latest/) is used for code completion, go to definition, diagnostics etc.
 * pylint (https://www.pylint.org/) is used as one of the engines behind warnings presented by the Assistant.
 * mypy (http://mypy-lang.org/) is used, just like pylint, as a warning engine in the Assistant.
 * pyserial (https://github.com/pyserial/pyserial) is used for communicating with MicroPython devices.
@@ -68,6 +68,8 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Austin Bart
 * Avag. sayan
 * badukaire
+* BBTF GmbH (bbtf.de)
+* @bletvaska
 * @bmcage
 * Bui Huy Quang
 * borpol
@@ -114,6 +116,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * jharris1993
 * Juan Falgueras
 * Juhan Oskar Hennoste (@FeldrinH)
+* Jon Peterson
 * Jonathan Campbell
 * Jordan Williams
 * jose1711
@@ -121,6 +124,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Karolina Surma (@befeleme)
 * Kaspar Papli
 * Kauri Raba
+* @kemelzaidan
 * kr-g
 * Laszlo Kocsis
 * Louis Lenchant
@@ -133,6 +137,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Martin Rommel
 * Matt Iversen
 * Miro Hrončok
+* @mrexodia
 * NathanBnm
 * Nicolas Despres
 * @omani
@@ -143,16 +148,21 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Petr. moses
 * Phil Duby
 * phr0gger
+* @plexus
 * Pop Vasile Alexandru
 * Radim
 * Ralf Michael Metzing
 * @rauferd
+* @razzius
 * Rene Lehtma
 * Richard Kanehl
+* Rosen Mitrev
 * Rune Langøy
+* Russell Taber
 * Saishen, Inc.
 * Sam Warmuth
 * Sami Almuhammady
+* S Jonkers
 * sailslack
 * Scott Blackledge
 * @scottfp
@@ -162,10 +172,12 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * sourceperl
 * speedy-10
 * Stefan Rothe
+* Stephen Gallo
 * Stewart Russell (@scruss)
 * Suk-Hyung Hwang
 * Sven Duzont
 * Syed Nasim
+* @t2solve
 * Taavi Ilp
 * tabreturn
 * TANAKA Masayuki

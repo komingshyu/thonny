@@ -19,6 +19,7 @@ import thonny
 from thonny import report_time
 from thonny.backend import UploadDownloadMixin, convert_newlines_if_has_shebang
 from thonny.common import (
+    ALL_EXPLAINED_STATUS_CODE,
     PROCESS_ACK,
     BackendEvent,
     EOFCommand,
@@ -1069,7 +1070,10 @@ class BareMetalMicroPythonBackend(MicroPythonBackend, UploadDownloadMixin):
             self._execute(source, capture_output=False)
             if restart_interpreter_before_run:
                 self._prepare_after_soft_reboot(False)
-        return {}
+
+            return {"source_for_language_server": cmd["source"]}
+        else:
+            return {}
 
     def _cmd_execute_system_command(self, cmd):
         # Can't use stdin, because a thread is draining it
@@ -1701,6 +1705,10 @@ class BareMetalMicroPythonBackend(MicroPythonBackend, UploadDownloadMixin):
             **kwargs,
         )
 
+    def _get_installed_distribution_metadata_bytes(self, meta_dir_path: str) -> bytes:
+        metadata_path = self._join_remote_path_parts(meta_dir_path, "METADATA")
+        return self._read_file_return_bytes(metadata_path)
+
     def _report_internal_exception(self, msg: str) -> None:
         super()._report_internal_exception(msg)
 
@@ -1715,10 +1723,7 @@ class BareMetalMicroPythonBackend(MicroPythonBackend, UploadDownloadMixin):
 
 
 class GenericBareMetalMicroPythonBackend(BareMetalMicroPythonBackend):
-    def _get_sys_path_for_analysis(self) -> Optional[List[str]]:
-        return [
-            os.path.join(os.path.dirname(__file__), "generic_api_stubs"),
-        ] + super()._get_sys_path_for_analysis()
+    pass
 
 
 class RawPasteNotSupportedError(RuntimeError):
@@ -1736,9 +1741,8 @@ def launch_bare_metal_backend(backend_class: Callable[..., BareMetalMicroPythonB
 
     try:
         if args["port"] is None:
-            # remain busy
-            while True:
-                time.sleep(1000)
+            print("\nPort not defined", file=sys.stderr)
+            sys.exit(ALL_EXPLAINED_STATUS_CODE)
         elif args["port"] == "webrepl":
             connection = WebReplConnection(args["url"], args["password"])
         else:
@@ -1759,7 +1763,7 @@ def launch_bare_metal_backend(backend_class: Callable[..., BareMetalMicroPythonB
         msg = BackendEvent(event_type="ProgramOutput", stream_name="stderr", data=text)
         sys.stdout.write(serialize_message(msg) + "\n")
         sys.stdout.flush()
-        sys.exit(1)
+        sys.exit(ALL_EXPLAINED_STATUS_CODE)
 
 
 if __name__ == "__main__":

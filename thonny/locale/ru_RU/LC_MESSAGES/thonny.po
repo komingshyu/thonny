@@ -1978,13 +1978,13 @@ msgstr "Разрешить запуск безымянных программ"
 
 #: thonny/plugins/pip_gui.py:600
 msgid "License"
-msgstr ""
+msgstr "Лицензия"
 
 #: thonny/plugins/run_debug_config_page.py:27
 msgid "Warn if a user module shadows a library module"
-msgstr ""
+msgstr "Предупреждать, если пользовательский модуль заменяет библиотечный модуль"
 
 #: thonny/plugins/micropython/pip_gui.py:65
 msgid "Search micropython-lib and PyPI"
-msgstr ""
+msgstr "Поиск в micropython-lib и PyPI"
 

@@ -18,7 +18,7 @@ if thonny_container not in sys.path:
 import thonny
 from thonny import report_time
 from thonny.backend import SshMixin
-from thonny.common import PROCESS_ACK, BackendEvent, serialize_message
+from thonny.common import ALL_EXPLAINED_STATUS_CODE, PROCESS_ACK, BackendEvent, serialize_message
 from thonny.plugins.micropython.bare_metal_backend import LF, NORMAL_PROMPT
 from thonny.plugins.micropython.connection import MicroPythonConnection
 from thonny.plugins.micropython.mp_back import (
@@ -75,7 +75,7 @@ class UnixMicroPythonBackend(MicroPythonBackend, ABC):
             msg = BackendEvent(event_type="ProgramOutput", stream_name="stderr", data=text)
             sys.stdout.write(serialize_message(msg) + "\n")
             sys.stdout.flush()
-            sys.exit(1)
+            sys.exit(ALL_EXPLAINED_STATUS_CODE)
 
         MicroPythonBackend.__init__(self, None, args)
 
@@ -250,6 +250,10 @@ class UnixMicroPythonBackend(MicroPythonBackend, ABC):
                     % " ".join(map(shlex.quote, args[1:]))
                 )
             args = ["-c", cmd.source]
+            source = cmd.source
+        else:
+            logger.info("Omitting source_for_langage_server, as it is not readily available")
+            source = None
 
         self._connection = self._create_connection(args)
         report_time("afconn")
@@ -261,6 +265,11 @@ class UnixMicroPythonBackend(MicroPythonBackend, ABC):
         report_time("beffhelp")
         self._prepare_after_soft_reboot()
         report_time("affhelp")
+
+        if source is not None:
+            return {"source_for_language_server": source}
+        else:
+            return {}
 
     def _cmd_execute_system_command(self, cmd):
         assert cmd.cmd_line.startswith("!")
@@ -340,12 +349,23 @@ class LocalUnixMicroPythonBackend(UnixMicroPythonBackend):
     def _create_pipkin_adapter(self):
         raise NotImplementedError()
 
+    def _get_installed_distribution_metadata_bytes(self, meta_dir_path: str) -> bytes:
+        metadata_path = os.path.join(meta_dir_path, "METADATA")
+        with open(metadata_path, "ba") as fp:
+            return fp.read()
+
 
 class SshUnixMicroPythonBackend(UnixMicroPythonBackend, SshMixin):
     def __init__(self, args):
         password = sys.stdin.readline().strip("\r\n")
         SshMixin.__init__(
-            self, args["host"], args["user"], password, args["interpreter"], args.get("cwd")
+            self,
+            args["host"],
+            args["port"],
+            args["user"],
+            password,
+            args["interpreter"],
+            args.get("cwd"),
         )
         self._interpreter_launcher = args.get("interpreter_launcher", [])
         UnixMicroPythonBackend.__init__(self, args)
@@ -383,6 +403,10 @@ class SshUnixMicroPythonBackend(UnixMicroPythonBackend, SshMixin):
 
     def _create_pipkin_adapter(self):
         raise NotImplementedError()
+
+    def _get_installed_distribution_metadata_bytes(self, meta_dir_path: str) -> bytes:
+        metadata_path = self._join_remote_path_parts(meta_dir_path, "METADATA")
+        return self._read_file_return_bytes(metadata_path)
 
 
 if __name__ == "__main__":

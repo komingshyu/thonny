@@ -51,6 +51,7 @@ from thonny.common import (
     path_startswith,
     running_in_virtual_environment,
     serialize_message,
+    try_get_base_executable,
     update_system_path,
 )
 
@@ -189,7 +190,7 @@ class MainCPythonBackend(MainBackend):
             user_dir = os.getcwd()
 
         # rough test to see if it's worth invoking the finder
-        for ext in ["", ".py", ".pyw"]:
+        for ext in ["", ".py", ".pyw", ".pyde"]:
             pot_path = os.path.join(user_dir, root_module_name + ext)
             if os.path.exists(pot_path):
                 logger.debug("Found import candidate: %r", pot_path)
@@ -424,10 +425,12 @@ class MainCPythonBackend(MainBackend):
             prefix=sys.prefix,
             welcome_text=f"Python {get_python_version_string()} ({sys.executable})",
             executable=sys.executable,
+            base_executable=try_get_base_executable(sys.executable),
             exe_dirs=get_exe_dirs(),
             in_venv=running_in_virtual_environment(),
             python_version=get_python_version_string(),
             cwd=os.getcwd(),
+            logfile=thonny.get_backend_log_file(),
         )
 
     def _cmd_cd(self, cmd):
@@ -614,7 +617,7 @@ class MainCPythonBackend(MainBackend):
                 .replace("<class '", "")
                 .replace("'>", "")
                 .strip(),
-                "attributes": self.export_variables(attributes),
+                "attributes": self.export_variables(attributes, all_variables=True),
             }
 
             if isinstance(value, io.TextIOWrapper):
@@ -695,16 +698,16 @@ class MainCPythonBackend(MainBackend):
             return {
                 "path": path,
                 "kind": kind,
-                "size": None if kind == "dir" else os.path.getsize(path),
-                "modified": os.path.getmtime(path),
+                "size_bytes": None if kind == "dir" else os.path.getsize(path),
+                "modified_epoch": os.path.getmtime(path),
                 "error": None,
             }
         except OSError as e:
             return {
                 "path": path,
                 "kind": None,
-                "size": None,
-                "modified": None,
+                "size_bytes": None,
+                "modified_epoch": None,
                 "error": str(e),
             }
 
@@ -816,9 +819,11 @@ class MainCPythonBackend(MainBackend):
         self._current_executor = executor_class(self, cmd)
         report_time("Done creating executor")
         try:
-            return self._current_executor.execute_source(
+            result = self._current_executor.execute_source(
                 source, filename, execution_mode, ast_postprocessors
             )
+            result["source_for_language_server"] = source
+            return result
         except SystemExit as e:
             sys.exit(e.code)
         finally:
@@ -880,8 +885,6 @@ class MainCPythonBackend(MainBackend):
 
         self._original_stdout.write(serialize_message(msg) + "\n")
         self._original_stdout.flush()
-        if isinstance(msg, ToplevelResponse):
-            self._check_load_jedi()
 
     def export_value(self, value, max_repr_length=5000):
         self._heap[id(value)] = value
@@ -896,12 +899,12 @@ class MainCPythonBackend(MainBackend):
 
         return ValueInfo(id(value), rep)
 
-    def export_variables(self, variables):
+    def export_variables(self, variables, all_variables=False):
         result = {}
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             for name in variables:
-                if not name.startswith("__"):
+                if not name.startswith("__") or all_variables:
                     result[name] = self.export_value(variables[name], 100)
 
         return result
@@ -1427,10 +1430,7 @@ def _is_library_file(filename):
     return (
         filename is None
         or path_startswith(filename, sys.prefix)
-        or hasattr(sys, "base_prefix")
-        and path_startswith(filename, sys.base_prefix)
-        or hasattr(sys, "real_prefix")
-        and path_startswith(filename, getattr(sys, "real_prefix"))
+        or path_startswith(filename, sys.base_prefix)
         or site.ENABLE_USER_SITE
         and path_startswith(filename, site.getusersitepackages())
     )

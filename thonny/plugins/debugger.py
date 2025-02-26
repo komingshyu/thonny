@@ -166,12 +166,11 @@ class SingleWindowDebugger(Debugger):
 
     def get_run_to_cursor_breakpoint(self):
         editor = get_workbench().get_editor_notebook().get_current_editor()
-        if editor:
-            filename = editor.get_filename()
+        if editor and editor.is_local():
             selection = editor.get_code_view().get_selected_range()
             lineno = selection.lineno
-            if filename and lineno:
-                return filename, lineno
+            if editor.get_target_path() and lineno:
+                return editor.get_target_path(), lineno
 
         return None
 
@@ -954,7 +953,7 @@ class DialogVisualizer(CommonDialog, FrameVisualizer):
         self.main_frame.grid(sticky=tk.NSEW)
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
-        self.main_pw = ui_utils.AutomaticPanedWindow(self.main_frame, orient=tk.VERTICAL)
+        self.main_pw = ui_utils.WorkbenchPanedWindow(self.main_frame, orient=tk.VERTICAL)
         self.main_pw.grid(sticky=tk.NSEW, padx=10, pady=10)
         self.main_frame.rowconfigure(0, weight=1)
         self.main_frame.columnconfigure(0, weight=1)
@@ -964,8 +963,7 @@ class DialogVisualizer(CommonDialog, FrameVisualizer):
             self._code_book, first_line_number=frame_info.firstlineno, font="EditorFont"
         )
         self._code_book.add(self._text_frame, text=tr("Source code"))
-        self.main_pw.add(self._code_book, minsize=200)
-        self._code_book.preferred_size_in_pw = 400
+        self.main_pw.add(self._code_book, minsize=200, height=400)
 
     def _load_code(self, frame_info):
         self._text_frame.set_content(frame_info.source)
@@ -1004,9 +1002,8 @@ class FunctionCallDialog(DialogVisualizer):
         DialogVisualizer._init_layout_widgets(self, master, frame_info)
         self._locals_book = CustomNotebook(self.main_pw, closable=False)
         self._locals_frame = VariablesFrame(self._locals_book)
-        self._locals_book.preferred_size_in_pw = 200
         self._locals_book.add(self._locals_frame, text=tr("Local variables"))
-        self.main_pw.add(self._locals_book, minsize=100)
+        self.main_pw.add(self._locals_book, minsize=100, height=200)
 
     def _load_code(self, frame_info):
         DialogVisualizer._load_code(self, frame_info)

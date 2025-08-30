@@ -9,7 +9,6 @@ import dataclasses
 import os.path
 import site
 import sys
-import urllib.parse
 from collections import namedtuple
 from dataclasses import dataclass
 from logging import getLogger
@@ -25,7 +24,7 @@ OBJECT_LINK_END = "[/object_link_for_thonny]"
 PROCESS_ACK = "OK"
 ALL_EXPLAINED_STATUS_CODE = 193
 
-NBSP = "\u00A0"
+NBSP = "\u00a0"
 
 IGNORED_FILES_AND_DIRS = [
     "System Volume Information",
@@ -65,7 +64,7 @@ TextRange = namedtuple("TextRange", ["lineno", "col_offset", "end_lineno", "end_
 @dataclass(frozen=True)
 class DistInfo:
     name: str
-    version: str
+    version: Optional[str]
     summary: Optional[str] = None
     license: Optional[str] = None
     author: Optional[str] = None

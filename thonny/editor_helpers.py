@@ -1,7 +1,6 @@
 import tkinter as tk
-import traceback
 from logging import getLogger
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Tuple
 
 from thonny import get_workbench, lsp_types
 from thonny.codeview import CodeViewText, SyntaxText, get_syntax_options_for_tag
@@ -88,7 +87,7 @@ class EditorInfoBox(tk.Toplevel):
         #    return
 
         # Need to close when another app or a Thonny's dialog appears
-        # (othewise the box will float above this, at least in Linux).
+        # (otherwise the box will float above this, at least in Linux).
         # Don't do anything if another EditorInfoBox appears
         for box in all_boxes:
             try:

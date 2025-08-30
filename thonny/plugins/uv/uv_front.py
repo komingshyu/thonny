@@ -17,11 +17,7 @@ class LocalCPythonUvProxy(LocalCPythonProxy):
 
     def compute_mgmt_executable(self):
         # TODO
-        return os.path.expanduser("~/.cargo/bin/uv")
-
-    def get_target_executable(self):
-        # TODO: should give python exe?
-        return self._mgmt_executable
+        return os.path.expanduser("~/.local/bin/uv")
 
     def get_mgmt_executable_special_switches(self) -> List[str]:
         cmd = ["run", "--project", self.get_cwd()]
@@ -108,6 +104,7 @@ class LocalCPythonUvConfigurationPage(TabbedBackendDetailsConfigurationPage):
         super().__init__(master)
 
         self.options_page = self.create_and_add_empty_page(tr("Options"))
+        self.stubs_page = self.create_and_add_stubs_page(proxy_class=self.proxy_class)
 
         label = ttk.Label(self.options_page, text="uv")
         label.grid()

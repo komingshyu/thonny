@@ -74,6 +74,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Bui Huy Quang
 * borpol
 * CADTEC GmbH (cadtec.ch)
+* @cclauss
 * cefn
 * Celso Isayah Dias
 * Chad Purdy
@@ -84,6 +85,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * cspaier
 * cubimon
 * Curtis Wang
+* @devk-op
 * Dominic Twyman
 * Dominik George
 * Donald Butt
@@ -125,9 +127,11 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Kaspar Papli
 * Kauri Raba
 * @kemelzaidan
+* @konflic
 * kr-g
 * Laszlo Kocsis
 * Louis Lenchant
+* Luis Miguel
 * Lrasinen
 * M Burak Kalkan
 * Marcelo de Gomensoro Malheiros
@@ -136,6 +140,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * Marko Ristin
 * Martin Rommel
 * Matt Iversen
+* Michel Coutu
 * Miro Hrončok
 * @mrexodia
 * NathanBnm
@@ -150,6 +155,7 @@ Source contributors, sponsors, advisors, translators and frequent bug-reporters
 * phr0gger
 * @plexus
 * Pop Vasile Alexandru
+* @r0zh
 * Radim
 * Ralf Michael Metzing
 * @rauferd

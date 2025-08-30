@@ -12,9 +12,9 @@ from update_variants_common import (
 
 base_url = "https://micropython.org/download/"
 
-UNSTABLE_VERSION = r"\d{8}-v1.25.0-preview\.\d+\.[a-z0-9]{10}"
-PREV_RELEVANT_VERSION = "1.23.0"
-PREV_RELEVANT_VERSION_IN_URL = "20240602-v1.23.0"
+UNSTABLE_VERSION = r"\d{8}-v1.27.0-preview\.\d+\.[a-z0-9]{10}"
+PREV_RELEVANT_VERSION = "1.25.0"
+PREV_RELEVANT_VERSION_IN_URL = "20250415-v1.25.0"
 
 
 class IndexParser(HTMLParser):
@@ -50,7 +50,7 @@ class IndexParser(HTMLParser):
 
 all_variants = []
 
-mcu_list = "esp8266, esp32, esp32s2, esp32s3, esp32c3, esp32c6, rp2040, rp2350, samd21, samd51, nrf51, nrf52"
+mcu_list = "esp8266, esp32, esp32s2, esp32s3, esp32c2, esp32c3, esp32c6, rp2040, rp2350, samd21, samd51, nrf51, nrf52"
 
 for mcu in map(str.strip, mcu_list.split(",")):
     print("Fetching mcu", mcu, end="... ")
@@ -189,7 +189,7 @@ add_defaults_and_downloads_to_variants(
         "info_url": "https://github.com/pimoroni/pimoroni-pico-rp2350/releases",
         "_download_url_pattern": "https://github.com/pimoroni/pimoroni-pico-rp2350/releases/download/v{version}/{id}-v{version}-pimoroni-micropython.uf2",
     },
-    ["0.0.11"],
+    ["0.0.12", "0.0.11"],
     pimo2350_variants,
 )
 
@@ -397,7 +397,7 @@ save_variants(
 save_variants(
     all_variants,
     ["bin"],
-    {"esp8266", "esp32", "esp32s2", "esp32s3", "esp32c3", "esp32c6"},
+    {"esp8266", "esp32", "esp32s2", "esp32s3", "esp32c2", "esp32c3", "esp32c6"},
     "micropython-variants-esptool.json",
     latest_prerelease_regex=UNSTABLE_VERSION,
 )

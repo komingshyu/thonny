@@ -10,11 +10,12 @@ import time
 import tkinter as tk
 import tkinter.font
 import traceback
-from _tkinter import TclError
 from dataclasses import dataclass
 from logging import getLogger
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union  # @UnusedImport
+
+from _tkinter import TclError
 
 from thonny import get_workbench, misc_utils, tktextext
 from thonny.common import TextRange, normpath_with_actual_case
@@ -2684,6 +2685,11 @@ def get_treeview_open_item_ids(tree: ttk.Treeview, parent: str = "") -> List[str
             result.extend(get_treeview_open_item_ids(tree, child))
 
     return result
+
+
+def parse_text_index(index: str) -> Tuple[int, int]:
+    line, col = map(int, index.split(".", maxsplit=1))
+    return line, col
 
 
 if __name__ == "__main__":

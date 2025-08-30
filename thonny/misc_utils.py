@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
-import datetime
 import os.path
 import pathlib
 import platform
@@ -473,7 +472,7 @@ def sizeof_fmt(num, suffix="B"):
     """Readable file size
     :param num: Bytes value
     :type num: int
-    :param suffix: Unit suffix (optionnal) default = B
+    :param suffix: Unit suffix (optional) default = B
     :type suffix: str
     :rtype: str
     """

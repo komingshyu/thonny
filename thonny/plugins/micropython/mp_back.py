@@ -3,12 +3,12 @@ MP 1.12
 
 >>> #import uos
 >>> dir(uos)
-['__class__', '__name__', 'remove', 'VfsFat', 'VfsLfs2', 'chdir', 'dupterm', 'dupterm_notify', 
-'getcwd', 'ilistdir', 'listdir', 'mkdir', 'mount', 'rename', 'rmdir', 'stat', 'statvfs', 'umount', 
+['__class__', '__name__', 'remove', 'VfsFat', 'VfsLfs2', 'chdir', 'dupterm', 'dupterm_notify',
+'getcwd', 'ilistdir', 'listdir', 'mkdir', 'mount', 'rename', 'rmdir', 'stat', 'statvfs', 'umount',
 'uname', 'urandom']
 >>> import sys
 >>> dir(sys)
-['__class__', '__name__', 'argv', 'byteorder', 'exit', 'implementation', 'maxsize', 'modules', 
+['__class__', '__name__', 'argv', 'byteorder', 'exit', 'implementation', 'maxsize', 'modules',
 'path', 'platform', 'print_exception', 'stderr', 'stdin', 'stdout', 'version', 'version_info']
 
 micro:bit (1.9.2)
@@ -18,7 +18,7 @@ micro:bit (1.9.2)
 ['__name__', 'remove', 'listdir', 'size', 'uname']
 >>> import sys
 >>> dir(sys)
-['__name__', 'version', 'version_info', 'implementation', 'platform', 'byteorder', 'exit', 
+['__name__', 'version', 'version_info', 'implementation', 'platform', 'byteorder', 'exit',
 'print_exception']
 
 CP 5.0
@@ -27,7 +27,7 @@ CP 5.0
 'stat', 'statvfs', 'sync', 'uname', 'unlink', 'urandom']
 >>> import sys
 >>> dir(sys)
-['__class__', '__name__', 'argv', 'byteorder', 'exit', 'implementation', 'maxsize', 'modules', 
+['__class__', '__name__', 'argv', 'byteorder', 'exit', 'implementation', 'maxsize', 'modules',
 'path', 'platform', 'print_exception', 'stderr', 'stdin', 'stdout', 'version', 'version_info']
 
 
@@ -116,6 +116,7 @@ class MicroPythonBackend(MainBackend, ABC):
         self._cwd = args.get("cwd")
         self._progress_times = {}
         self._welcome_text = None
+        self._board_id: Optional[str] = None
         self._sys_path = None
         self._epoch_year = None
         self._builtin_modules = []
@@ -141,6 +142,10 @@ class MicroPythonBackend(MainBackend, ABC):
             if not self._builtin_modules:
                 self._builtin_modules = self._fetch_builtin_modules()
                 logger.debug("Built-in modules: %s", self._builtin_modules)
+
+            if not self._board_id:
+                self._board_id = self._fetch_board_id()
+                logger.debug("board_id = %r", self._board_id)
 
             self._prepare_rtc()
             self._send_ready_message()
@@ -383,6 +388,9 @@ class MicroPythonBackend(MainBackend, ABC):
     def _fetch_builtin_modules(self):
         raise NotImplementedError()
 
+    def _fetch_board_id(self) -> Optional[str]:
+        return None
+
     def _fetch_sys_path(self):
         if not self._supports_directories():
             return []
@@ -435,7 +443,7 @@ class MicroPythonBackend(MainBackend, ABC):
             self._cwd = self._evaluate("__thonny_helper.getcwd()")
 
     def _send_ready_message(self):
-        args = dict(cwd=self._cwd)
+        args = dict(cwd=self._cwd, board_id=self._board_id)
         args["welcome_text"] = self._welcome_text
 
         self.send_message(ToplevelResponse(**args))
@@ -1329,9 +1337,6 @@ class MicroPythonBackend(MainBackend, ABC):
             e.out,
             e.err,
         )
-
-    def get_user_stubs_location(self):
-        return self._args["user_stubs_location"]
 
 
 class ProtocolError(RuntimeError):
